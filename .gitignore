@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+venv/
+worm_motility_results.csv
+
+# Sample/test videos are large local test data, not repo content
+# (one sample exceeds GitHub's 100MB file size limit).
+assets/*.avi
+assets/*.mp4
+assets/*.mov
+assets/*.mkv
+
+.claude/
+.rainman/
