@@ -264,10 +264,12 @@ class App:
         for c in SUMMARY_COLUMNS:
             self.tree.heading(c, text=SUMMARY_HEADERS[c])
             self.tree.column(c, width=105, anchor="center")
-        scroll = ttk.Scrollbar(stage3, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
+        vscroll = ttk.Scrollbar(stage3, orient="vertical", command=self.tree.yview)
+        hscroll = ttk.Scrollbar(stage3, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
+        vscroll.grid(row=0, column=1, sticky="ns")
+        hscroll.grid(row=1, column=0, sticky="we")
 
     def show_results(self, rows):
         by_video = {}
