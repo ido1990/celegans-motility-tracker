@@ -271,11 +271,13 @@ class App:
             healthy_rows = [r for r in video_rows if r["final_state"] == "HEALTHY"]
             diseased = sum(1 for r in video_rows if r["final_state"] == "DISEASED")
             dead = sum(1 for r in video_rows if r["final_state"] == "DEAD")
+            avg_all_rate = sum(r["thrash_rate_per_min"] for r in video_rows) / len(video_rows)
             avg_healthy_rate = (sum(r["thrash_rate_per_min"] for r in healthy_rows) / len(healthy_rows)
                                  if healthy_rows else 0.0)
             parent_text = (f"{video}  —  {len(video_rows)} worms | "
                             f"Healthy:{len(healthy_rows)} Diseased:{diseased} Dead:{dead} | "
-                            f"Avg Healthy Rate: {avg_healthy_rate:.1f}/min")
+                            f"Avg All: {avg_all_rate:.1f}/min | "
+                            f"Avg Healthy: {avg_healthy_rate:.1f}/min")
             parent = self.tree.insert("", "end", text=parent_text, open=True)
             for r in sorted(video_rows, key=lambda r: r["worm_id"]):
                 self.tree.insert(parent, "end", text="", values=[r[c] for c in RESULT_COLUMNS])
