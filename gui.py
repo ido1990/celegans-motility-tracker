@@ -29,35 +29,49 @@ def _nop(_):
     pass
 
 
-def setup_window():
+def setup_window(overrides=None):
+    o = overrides or {}
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.createTrackbar("Min Area", WINDOW_NAME, DEFAULT_MIN_AREA, 3000, _nop)
-    cv2.createTrackbar("Sensitivity", WINDOW_NAME, DEFAULT_SENSITIVITY, 60, _nop)
-    cv2.createTrackbar("Playback Speed (ms)", WINDOW_NAME, DEFAULT_DELAY_MS, 200, _nop)
-    cv2.createTrackbar("Max Track Dist", WINDOW_NAME, int(tracker_mod.MAX_DISTANCE), 150, _nop)
-    cv2.createTrackbar("Track Patience (fr)", WINDOW_NAME, tracker_mod.MAX_DISAPPEARED, 120, _nop)
-    cv2.createTrackbar("Healthy Rate", WINDOW_NAME, DEFAULT_HEALTHY_THRESHOLD, 100, _nop)
-    cv2.createTrackbar("Dead Pos Delta", WINDOW_NAME, int(tracker_mod.DEAD_POSITION_DELTA), 60, _nop)
-    cv2.createTrackbar("Dead Bend Delta", WINDOW_NAME, int(tracker_mod.DEAD_BEND_DELTA), 90, _nop)
-    cv2.createTrackbar("Dead Window (fr)", WINDOW_NAME, tracker_mod.DEAD_WINDOW_FRAMES, 300, _nop)
+    cv2.createTrackbar("Min Area", WINDOW_NAME, int(o.get("min_area", DEFAULT_MIN_AREA)), 3000, _nop)
+    cv2.createTrackbar("Sensitivity", WINDOW_NAME, int(o.get("sensitivity", DEFAULT_SENSITIVITY)), 60, _nop)
+    cv2.createTrackbar("Playback Speed (ms)", WINDOW_NAME, int(o.get("delay_ms", DEFAULT_DELAY_MS)), 200, _nop)
+    cv2.createTrackbar("Max Track Dist", WINDOW_NAME, int(o.get("max_distance", tracker_mod.MAX_DISTANCE)), 150, _nop)
+    cv2.createTrackbar("Track Patience (fr)", WINDOW_NAME,
+                        int(o.get("max_disappeared", tracker_mod.MAX_DISAPPEARED)), 120, _nop)
+    cv2.createTrackbar("Healthy Rate", WINDOW_NAME, int(o.get("healthy_threshold", DEFAULT_HEALTHY_THRESHOLD)),
+                        100, _nop)
+    cv2.createTrackbar("Dead Pos Delta", WINDOW_NAME, int(o.get("dead_pos_delta", tracker_mod.DEAD_POSITION_DELTA)),
+                        60, _nop)
+    cv2.createTrackbar("Dead Bend Delta", WINDOW_NAME, int(o.get("dead_bend_delta", tracker_mod.DEAD_BEND_DELTA)),
+                        90, _nop)
+    cv2.createTrackbar("Dead Window (fr)", WINDOW_NAME, int(o.get("dead_window", tracker_mod.DEAD_WINDOW_FRAMES)),
+                        300, _nop)
 
 
-def read_controls(dry_run, min_area_default=DEFAULT_MIN_AREA):
-    """Segmentation/playback controls, read fresh every frame."""
+def read_controls(dry_run, overrides=None):
+    """Segmentation/playback controls, read fresh every frame.
+
+    In live mode these come from the trackbars (draggable mid-run); in dry-run mode (no
+    window/trackbars exist) they come straight from `overrides`, which is also what seeds
+    the trackbars' initial position in live mode — see setup_window().
+    """
+    o = overrides or {}
     if dry_run:
-        return min_area_default, DEFAULT_SENSITIVITY, DEFAULT_DELAY_MS
+        return o.get("min_area", DEFAULT_MIN_AREA), o.get("sensitivity", DEFAULT_SENSITIVITY), \
+            o.get("delay_ms", DEFAULT_DELAY_MS)
     min_area = cv2.getTrackbarPos("Min Area", WINDOW_NAME)
     sensitivity = max(1, cv2.getTrackbarPos("Sensitivity", WINDOW_NAME))
     delay_ms = max(1, cv2.getTrackbarPos("Playback Speed (ms)", WINDOW_NAME))
     return min_area, sensitivity, delay_ms
 
 
-def read_tracker_controls(dry_run):
-    """Tracker/classification tuning knobs, read fresh every frame."""
+def read_tracker_controls(dry_run, overrides=None):
+    """Tracker/classification tuning knobs, read fresh every frame. See read_controls()."""
+    o = overrides or {}
     if dry_run:
-        return (tracker_mod.MAX_DISTANCE, tracker_mod.MAX_DISAPPEARED, DEFAULT_HEALTHY_THRESHOLD,
-                tracker_mod.DEAD_POSITION_DELTA, tracker_mod.DEAD_BEND_DELTA,
-                tracker_mod.DEAD_WINDOW_FRAMES)
+        return (o.get("max_distance", tracker_mod.MAX_DISTANCE), o.get("max_disappeared", tracker_mod.MAX_DISAPPEARED),
+                o.get("healthy_threshold", DEFAULT_HEALTHY_THRESHOLD), o.get("dead_pos_delta", tracker_mod.DEAD_POSITION_DELTA),
+                o.get("dead_bend_delta", tracker_mod.DEAD_BEND_DELTA), o.get("dead_window", tracker_mod.DEAD_WINDOW_FRAMES))
     max_distance = max(1, cv2.getTrackbarPos("Max Track Dist", WINDOW_NAME))
     max_disappeared = max(1, cv2.getTrackbarPos("Track Patience (fr)", WINDOW_NAME))
     healthy_threshold = cv2.getTrackbarPos("Healthy Rate", WINDOW_NAME)
@@ -140,19 +154,30 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     }
 
 
-def process_video(path, dry_run, writer):
+def process_video(path, dry_run, writer, overrides=None):
     """Runs the pipeline on one video, writes its rows to `writer`, and returns
-    (aborted, rows) where rows is the same per-worm dicts that were written."""
+    (aborted, rows) where rows is the same per-worm dicts that were written.
+
+    `overrides` (optional dict) lets a caller (the CLI's trackbars are the other source)
+    pin parameters up front, e.g. {"sensitivity": 20, "min_area": 200}. Any key left out
+    keeps its usual default/auto behavior. Min Area is special: if not overridden, it's
+    auto-calibrated per video from that video's own footage (see analyzer.estimate_min_area).
+    """
+    overrides = overrides or {}
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         print(f"  could not open {path}, skipping")
         return False, []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     bg_model = analyzer.build_background_model(cap)
-    calibrated_min_area = analyzer.estimate_min_area(cap, bg_model, fallback=DEFAULT_MIN_AREA)
-    print(f"  auto-calibrated Min Area for {os.path.basename(path)}: {calibrated_min_area}px")
+    if overrides.get("min_area") is not None:
+        calibrated_min_area = int(overrides["min_area"])
+    else:
+        calibrated_min_area = analyzer.estimate_min_area(cap, bg_model, fallback=DEFAULT_MIN_AREA)
+        print(f"  auto-calibrated Min Area for {os.path.basename(path)}: {calibrated_min_area}px")
     if not dry_run:
         cv2.setTrackbarPos("Min Area", WINDOW_NAME, min(calibrated_min_area, 3000))
+    video_overrides = {**overrides, "min_area": calibrated_min_area}
     trk = CentroidTracker()
     adult_areas = []
     frame_idx = 0
@@ -166,8 +191,8 @@ def process_video(path, dry_run, writer):
         if not ok:
             break
 
-        min_area, sensitivity, delay_ms = read_controls(dry_run, calibrated_min_area)
-        tracker_controls = read_tracker_controls(dry_run)
+        min_area, sensitivity, delay_ms = read_controls(dry_run, video_overrides)
+        tracker_controls = read_tracker_controls(dry_run, video_overrides)
         healthy_threshold = tracker_controls[2]
         apply_tracker_controls(trk, tracker_controls)
         max_single_area = np.median(adult_areas[-500:]) * 2.75 if adult_areas else 1500.0
@@ -231,10 +256,14 @@ def find_videos(folder):
     )
 
 
-def run_batch(folder, output_path, dry_run, progress=None):
+def run_batch(folder, output_path, dry_run, progress=None, params=None):
     """Processes every video in `folder`, writes `output_path` CSV, and returns the
     combined list of per-worm row dicts (across all videos) for a caller (CLI print,
-    or a GUI results view) to use without having to re-read the CSV."""
+    or a GUI results view) to use without having to re-read the CSV.
+
+    `params` (optional dict) sets initial/fixed parameter values up front (e.g. from a
+    launcher UI) instead of relying purely on live trackbar dragging — see process_video().
+    """
     videos = find_videos(folder)
     if not videos:
         if progress:
@@ -242,7 +271,7 @@ def run_batch(folder, output_path, dry_run, progress=None):
         return []
 
     if not dry_run:
-        setup_window()
+        setup_window(params)
 
     all_rows = []
     try:
@@ -252,7 +281,7 @@ def run_batch(folder, output_path, dry_run, progress=None):
             for i, path in enumerate(videos, 1):
                 if progress:
                     progress(f"Processing {i}/{len(videos)}: {os.path.basename(path)}")
-                aborted, rows = process_video(path, dry_run, writer)
+                aborted, rows = process_video(path, dry_run, writer, params)
                 all_rows.extend(rows)
                 f.flush()
                 if aborted:

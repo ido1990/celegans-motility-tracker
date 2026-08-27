@@ -21,12 +21,22 @@ minute) per worm — with a live OpenCV preview and a CSV export.
   rate) with trackbars to tune detection on the fly, and writes results to a
   CSV. Exposes `run_batch()` for other front-ends (like `launcher.py`) to
   call directly.
-- **`launcher.py`** — **this is the app end users run.** A small Tkinter
-  window: pick a folder, hit Run, and see per-worm results in a table
-  (grouped by video, with a summary line per video) without needing to open
-  the CSV. Runs the pipeline in a background thread so the window stays
-  responsive; the live OpenCV preview (unless "no live preview" is checked)
-  still pops up during processing, same as running `gui.py` directly.
+- **`launcher.py`** — **this is the app end users run.** One window, three
+  stacked stages:
+  1. **Folder & Parameters** — pick a folder, and set every detection/tracking
+     knob (Sensitivity, Healthy Rate, Max Track Dist, Track Patience, Dead
+     Pos/Bend Delta, Dead Window, Playback Speed) before running, instead of
+     dragging cv2 trackbars mid-playback. Min Area has an "Auto-calibrate"
+     checkbox (on by default, one value per video — see below) or can be
+     pinned to one fixed number for the whole batch.
+  2. **Run** — processes every video in a background thread so the window
+     stays responsive; the live OpenCV preview (unless "no live preview" is
+     checked) still pops up during processing, using the parameters you set
+     as their starting point — you can still drag the cv2 trackbars live if
+     you want to fine-tune mid-run.
+  3. **Results** — a table, grouped by video with a summary line per video,
+     appears in the same window when the run finishes. No need to open the
+     CSV, though it's still written alongside.
 - **`build.py`** — packages `launcher.py` into a single portable executable
   via PyInstaller.
 
