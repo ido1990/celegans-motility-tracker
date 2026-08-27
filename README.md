@@ -99,11 +99,32 @@ While the preview window is open:
 
 ### On Windows, without installing anything manually
 
-Double-click **`run_windows.bat`** (or run it from a terminal). It creates a
-local virtual environment, installs dependencies, and launches the tool. You
-still need Python installed from [python.org](https://www.python.org/) with
-"Add python.exe to PATH" checked during setup — this is the fastest way to
-test the tool on Windows without building an executable.
+1. Install Python 3.10+ from [python.org](https://www.python.org/downloads/) —
+   during setup, check **"Add python.exe to PATH"**.
+2. Download/copy this project folder onto the Windows machine.
+3. Double-click **`run_windows.bat`** (or open a terminal in the folder and
+   run `run_windows.bat`).
+
+What it does, each time you run it:
+
+- Creates a local virtual environment in `venv\` (first run only — reused
+  after that).
+- Installs/updates everything in `requirements.txt` into that venv.
+- Launches `launcher.py` — the folder-picker GUI window should appear.
+- Leaves a terminal window open (`pause` at the end) so you can read any
+  error output if something went wrong.
+
+This is the fastest way to run/test the tool on Windows — no compiling, no
+admin rights beyond a normal Python install. Re-run the `.bat` any time; it
+won't recreate the venv unless you delete the `venv\` folder.
+
+**Troubleshooting:**
+- `'python' is not recognized...` — Python isn't on PATH; reinstall from
+  python.org with the PATH checkbox checked, or run `py run_windows.bat`
+  equivalent commands manually with the `py` launcher instead.
+- Antivirus/SmartScreen flags the `.bat` or the built `.exe` — expected for
+  an unsigned script/executable from a new source; choose "Run anyway" /
+  "More info → Run anyway".
 
 ## Output
 
@@ -133,28 +154,67 @@ python tracker.py
 
 ## Building a standalone executable
 
+**PyInstaller builds are OS-specific — it does not cross-compile.** Building
+on Linux produces a Linux binary, building on macOS produces a macOS binary,
+building on Windows produces a Windows `.exe`. There's no reliable way to
+produce a genuine Windows `.exe` from Linux/macOS for an OpenCV/SciPy-heavy
+app (Wine-based cross-builds are fragile and not used here) — to distribute
+a `.exe`, run the build on an actual Windows machine (or a `windows-latest`
+CI runner).
+
+The build command is the same everywhere:
+
 ```bash
 pip install -r requirements.txt
 python build.py
 ```
-
-Produces a single-file executable in `dist/` (`MotilityTracker` /
-`MotilityTracker.exe`) that end users can run without installing Python or
-any dependency.
-
-**PyInstaller builds are OS-specific — it does not cross-compile.** Building
-on Linux produces a Linux binary; to get a Windows `.exe` for non-technical
-users, run `build.py` on an actual Windows machine (or a Windows CI runner).
-There is no reliable way to produce a genuine Windows `.exe` from Linux for
-an OpenCV/SciPy-heavy app (Wine-based cross-builds are fragile and not used
-here) — use `run_windows.bat` above to test on Windows via Python instead,
-and build the real `.exe` from Windows when you're ready to distribute it.
 
 `build.py` explicitly excludes a few unrelated heavy packages
 (`torch`, `sklearn`, `nvidia`, `triton`, `jax`, `cupy`) that PyInstaller can
 otherwise pull in if they happen to be installed on the build machine, due to
 an optional SciPy compatibility shim that references them — none of this
 project's code imports them.
+
+### Windows
+
+```bat
+py -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python build.py
+```
+
+Produces `dist\MotilityTracker.exe`. Copy that one file anywhere on another
+Windows machine and double-click it — no Python install needed there.
+
+### macOS
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python build.py
+```
+
+Produces `dist/MotilityTracker`. On first launch, Gatekeeper will likely
+block it as from an unidentified developer — right-click → **Open** once to
+approve it (or `xattr -d com.apple.quarantine dist/MotilityTracker`).
+
+### Linux
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python build.py
+```
+
+Produces `dist/MotilityTracker`. `chmod +x dist/MotilityTracker` if it isn't
+already executable, then run it directly (`./dist/MotilityTracker`).
+
+All three produce a single-file executable that end users can run without
+installing Python or any dependency — just not portable *across* platforms,
+so build once per target OS.
 
 ## Known limitations
 
