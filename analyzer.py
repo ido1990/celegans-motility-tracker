@@ -44,6 +44,41 @@ def extract_contours(mask, min_pixel_floor=15):
     return [c for c in contours if cv2.contourArea(c) >= min_pixel_floor]
 
 
+def _otsu_area_cutoff(areas, fallback):
+    """Splits a list of contour areas into a small (juvenile/debris) and large (adult)
+    population via Otsu on the log-scaled areas — the same trick preprocess_frame uses on
+    pixel intensities, applied to area instead so the cutoff isn't tied to one zoom level."""
+    if len(areas) < 10:
+        return fallback
+    log_areas = np.log(np.array(areas, dtype=np.float64) + 1.0)
+    spread = np.ptp(log_areas)
+    if spread < 1e-6:
+        return fallback
+    scaled = ((log_areas - log_areas.min()) / spread * 255).astype(np.uint8)
+    otsu_val, _ = cv2.threshold(scaled.reshape(1, -1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    cutoff_log = log_areas.min() + (otsu_val / 255.0) * spread
+    return max(15, int(np.exp(cutoff_log) - 1.0))
+
+
+def estimate_min_area(cap, bg_model, watermark_rows=32, n_samples=25, fallback=150):
+    """Auto-calibrates the adult/juvenile area cutoff from this video's own footage, so the
+    same physical worm size doesn't need a different Min Area typed in by hand at every
+    zoom/magnification level."""
+    total = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
+    idxs = np.linspace(0, total - 1, min(n_samples, total)).astype(int)
+    areas = []
+    for i in idxs:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        mask = preprocess_frame(gray, bg_model, watermark_rows)
+        areas.extend(cv2.contourArea(c) for c in extract_contours(mask))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    return _otsu_area_cutoff(areas, fallback)
+
+
 def classify_contour(c, min_area, max_single_area):
     area = cv2.contourArea(c)
     (cx, cy), (w, h), _ = cv2.minAreaRect(c)
@@ -152,5 +187,15 @@ if __name__ == "__main__":
                   key=cv2.contourArea)
     label2, _ = classify_contour(elong_c, min_area=50, max_single_area=1e9)
     assert label2 == CANDIDATE_ADULT, f"expected elongated shape to classify as CANDIDATE_ADULT, got {label2}"
+
+    rng = np.random.default_rng(0)
+    small_cluster = list(rng.normal(30, 3, 30))  # juvenile/debris-sized, e.g. one zoom level
+    large_cluster = list(rng.normal(800, 60, 30))  # adult-sized
+    cutoff = _otsu_area_cutoff(small_cluster + large_cluster, fallback=999)
+    assert cutoff < min(large_cluster), f"cutoff {cutoff} must stay below the adult cluster"
+    assert cutoff > max(small_cluster) * 0.5, f"cutoff {cutoff} should be in the juvenile cluster's ballpark, not near zero"
+    assert all(a >= cutoff for a in large_cluster), "every adult-sized sample should clear the cutoff"
+    assert _otsu_area_cutoff([50, 51, 52], fallback=999) == 999, "expected fallback on too-few samples"
+    assert _otsu_area_cutoff([100] * 20, fallback=999) == 999, "expected fallback on zero-spread data"
 
     print("analyzer.py self-check: PASS")

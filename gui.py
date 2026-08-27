@@ -42,10 +42,10 @@ def setup_window():
     cv2.createTrackbar("Dead Window (fr)", WINDOW_NAME, tracker_mod.DEAD_WINDOW_FRAMES, 300, _nop)
 
 
-def read_controls(dry_run):
+def read_controls(dry_run, min_area_default=DEFAULT_MIN_AREA):
     """Segmentation/playback controls, read fresh every frame."""
     if dry_run:
-        return DEFAULT_MIN_AREA, DEFAULT_SENSITIVITY, DEFAULT_DELAY_MS
+        return min_area_default, DEFAULT_SENSITIVITY, DEFAULT_DELAY_MS
     min_area = cv2.getTrackbarPos("Min Area", WINDOW_NAME)
     sensitivity = max(1, cv2.getTrackbarPos("Sensitivity", WINDOW_NAME))
     delay_ms = max(1, cv2.getTrackbarPos("Playback Speed (ms)", WINDOW_NAME))
@@ -149,6 +149,10 @@ def process_video(path, dry_run, writer):
         return False, []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     bg_model = analyzer.build_background_model(cap)
+    calibrated_min_area = analyzer.estimate_min_area(cap, bg_model, fallback=DEFAULT_MIN_AREA)
+    print(f"  auto-calibrated Min Area for {os.path.basename(path)}: {calibrated_min_area}px")
+    if not dry_run:
+        cv2.setTrackbarPos("Min Area", WINDOW_NAME, min(calibrated_min_area, 3000))
     trk = CentroidTracker()
     adult_areas = []
     frame_idx = 0
@@ -162,7 +166,7 @@ def process_video(path, dry_run, writer):
         if not ok:
             break
 
-        min_area, sensitivity, delay_ms = read_controls(dry_run)
+        min_area, sensitivity, delay_ms = read_controls(dry_run, calibrated_min_area)
         tracker_controls = read_tracker_controls(dry_run)
         healthy_threshold = tracker_controls[2]
         apply_tracker_controls(trk, tracker_controls)

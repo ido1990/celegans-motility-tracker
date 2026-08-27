@@ -33,14 +33,29 @@ minute) per worm — with a live OpenCV preview and a CSV export.
 ### Matching the original requirements
 
 - **Dual strain (CL2122 healthy / GMC diseased) handling** — segmentation
-  uses a self-adapting threshold (Otsu on a background-subtracted frame) so
-  it isn't tuned to one strain's contrast. Motion pace differs a lot between
-  strains, so *what counts as fast enough to be "healthy"* is the **Healthy
-  Rate** trackbar (thrashes/min cutoff) — turn it down for a GMC (diseased,
-  slow) video, up for a CL2122 (healthy, fast) one.
+  uses a self-adapting threshold (Otsu on a background-subtracted frame,
+  recomputed per video) so it isn't tuned to one strain's contrast or
+  lighting condition. Motion pace differs a lot between strains, so *what
+  counts as fast enough to be "healthy"* is the **Healthy Rate** trackbar
+  (thrashes/min cutoff) — turn it down for a GMC (diseased, slow) video, up
+  for a CL2122 (healthy, fast) one.
+- **Lighting** — already auto-adjusted per video: the segmentation threshold
+  isn't a fixed brightness value, it's an Otsu split computed fresh on each
+  video's own background-subtracted frames, so a darker or brighter
+  recording doesn't need retuning.
 - **Only adult worms counted** — `classify_contour()` filters out contours
   below **Min Area** as juveniles (recently hatched, small) before they ever
   reach the tracker; they're drawn gray, never tracked, never counted.
+  **Min Area auto-calibrates per video** (`analyzer.estimate_min_area`):
+  before processing starts, it samples ~25 frames from that video, collects
+  every contour's area, and splits the distribution into a small
+  (juvenile/debris) and large (adult) population via Otsu on the log-scaled
+  areas — the same technique already used for segmentation, just applied to
+  area instead of pixel intensity. This means the same physical worm size
+  doesn't need a different hand-typed number at every zoom/magnification —
+  the trackbar starts at the calibrated value and prints it to the console
+  (`auto-calibrated Min Area for <video>: <N>px`); you can still drag it if
+  the auto value is wrong for unusual footage.
 - **Dead worms excluded from the count** — a track only flips to `DEAD` once
   *both* its position and body-bend angle stay within a small delta (**Dead
   Pos Delta** / **Dead Bend Delta**) for a window of frames (**Dead Window**),
