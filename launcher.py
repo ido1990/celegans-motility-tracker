@@ -21,6 +21,10 @@ COLUMN_HEADERS = {
     "thrash_rate_per_min": "Thrash/min", "mean_area": "Mean Area",
     "mean_bend_amplitude_deg": "Mean Bend deg",
 }
+# Per-video summary stats, shown only on each video's parent row (blank on worm rows) — kept as
+# real columns rather than packed into the tree label, since that column is too narrow to show them.
+SUMMARY_COLUMNS = ["avg_all_rate", "avg_healthy_rate"]
+SUMMARY_HEADERS = {"avg_all_rate": "Avg All/min", "avg_healthy_rate": "Avg Healthy/min"}
 
 # key, label, default, min, max — mirrors gui.py's cv2 trackbars, minus Min Area (handled
 # separately below since it can be auto-calibrated per video instead of a fixed number).
@@ -251,12 +255,15 @@ class App:
         stage3.rowconfigure(0, weight=1)
         stage3.columnconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(stage3, columns=RESULT_COLUMNS, show="tree headings")
+        self.tree = ttk.Treeview(stage3, columns=RESULT_COLUMNS + SUMMARY_COLUMNS, show="tree headings")
         self.tree.heading("#0", text="Video")
         self.tree.column("#0", width=260, anchor="w")
         for c in RESULT_COLUMNS:
             self.tree.heading(c, text=COLUMN_HEADERS[c])
             self.tree.column(c, width=95, anchor="center")
+        for c in SUMMARY_COLUMNS:
+            self.tree.heading(c, text=SUMMARY_HEADERS[c])
+            self.tree.column(c, width=105, anchor="center")
         scroll = ttk.Scrollbar(stage3, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -275,12 +282,12 @@ class App:
             avg_healthy_rate = (sum(r["thrash_rate_per_min"] for r in healthy_rows) / len(healthy_rows)
                                  if healthy_rows else 0.0)
             parent_text = (f"{video}  —  {len(video_rows)} worms | "
-                            f"Healthy:{len(healthy_rows)} Diseased:{diseased} Dead:{dead} | "
-                            f"Avg All: {avg_all_rate:.1f}/min | "
-                            f"Avg Healthy: {avg_healthy_rate:.1f}/min")
-            parent = self.tree.insert("", "end", text=parent_text, open=True)
+                            f"Healthy:{len(healthy_rows)} Diseased:{diseased} Dead:{dead}")
+            summary_values = [""] * len(RESULT_COLUMNS) + [f"{avg_all_rate:.1f}", f"{avg_healthy_rate:.1f}"]
+            parent = self.tree.insert("", "end", text=parent_text, open=True, values=summary_values)
             for r in sorted(video_rows, key=lambda r: r["worm_id"]):
-                self.tree.insert(parent, "end", text="", values=[r[c] for c in RESULT_COLUMNS])
+                self.tree.insert(parent, "end", text="",
+                                  values=[r[c] for c in RESULT_COLUMNS] + ["", ""])
 
 
 def main():
