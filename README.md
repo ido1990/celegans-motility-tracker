@@ -29,14 +29,19 @@ minute) per worm — with a live OpenCV preview and a CSV export.
      dragging cv2 trackbars mid-playback. Min Area has an "Auto-calibrate"
      checkbox (on by default, one value per video — see below) or can be
      pinned to one fixed number for the whole batch.
+     Hover any parameter label to see a tooltip explaining what it does.
   2. **Run** — processes every video in a background thread so the window
      stays responsive; the live OpenCV preview (unless "no live preview" is
      checked) still pops up during processing, using the parameters you set
      as their starting point — you can still drag the cv2 trackbars live if
-     you want to fine-tune mid-run.
-  3. **Results** — a table, grouped by video with a summary line per video,
-     appears in the same window when the run finishes. No need to open the
-     CSV, though it's still written alongside.
+     you want to fine-tune mid-run. A **Stop** button next to Run cancels an
+     in-progress run — checked once per frame (and during the per-video
+     calibration phase), so it responds within about a second — and keeps
+     whatever results were already collected.
+  3. **Results** — a table, grouped by video with a summary line per video
+     (worm counts by state and the average thrash rate among that video's
+     HEALTHY worms), appears in the same window when the run finishes. No
+     need to open the CSV, though it's still written alongside.
 - **`build.py`** — packages `launcher.py` into a single portable executable
   via PyInstaller.
 
@@ -70,7 +75,7 @@ minute) per worm — with a live OpenCV preview and a CSV export.
   *both* its position and body-bend angle stay within a small delta (**Dead
   Pos Delta** / **Dead Bend Delta**) for a window of frames (**Dead Window**),
   and `DEAD` tracks are excluded from `Avg Thrashes/Min` and from the
-  HEALTHY/DISEASED averages shown in the results window.
+  per-video HEALTHY average shown in the results window.
 - **Worms entering/leaving frame** — `thrash_rate_per_min` is computed as
   `total_thrashes / (visible_frames / fps) * 60`, where `visible_frames`
   counts only the frames between that worm's `frame_entry` and `frame_exit`
@@ -248,4 +253,10 @@ so build once per target OS.
   occlusion, a worm's ID can occasionally churn (dropped and re-registered as
   a new ID) rather than being perfectly preserved across every crossing.
   `Max Track Dist` and `Track Patience` are the main levers to tune this for
-  your footage.
+  your footage. When two worms merge into one blob, the tracker no longer
+  lets that blob's blended centroid drag either worm's tracked position
+  toward the other — each frozen track only resumes moving once it's seen on
+  its own again — which avoids one source of position corruption during an
+  overlap, but genuinely disambiguating *which* worm went which way through
+  a crossing would need appearance-based re-identification, which this
+  project intentionally doesn't implement (see the design tradeoffs above).

@@ -95,14 +95,21 @@ class CentroidTracker:
                 tid = track_ids[r]
                 det = all_dets[c]
                 t = self.tracks[tid]
-                t.centroid = det["centroid"]
-                t.contour = det["contour"]
+                if det.get("is_merged"):
+                    # A merged blob's blended centroid is an average of (at least) two worms'
+                    # positions — not this worm's true position. Keep the last real position
+                    # instead of jumping to it (same treatment as a miss, below); only the
+                    # contour follows the blob so the on-screen box tracks what's visible.
+                    t.contour = det["contour"]
+                else:
+                    t.centroid = det["centroid"]
+                    t.contour = det["contour"]
+                    t.area_history.append(det.get("area", 0.0))
                 t.last_seen_frame = frame_idx
                 t.disappeared_count = 0
                 angle = None if det.get("is_merged") else det.get("bend_angle")
                 t.bend_angle_history.append(angle)
-                t.centroid_history.append(det["centroid"])
-                t.area_history.append(det.get("area", 0.0))
+                t.centroid_history.append(t.centroid)
                 self._update_dead_state(t)
                 matched_track_ids.add(tid)
                 matched_det_idxs.add(c)
@@ -158,5 +165,25 @@ if __name__ == "__main__":
     tracker.update(frame3, 2)
     assert set(tracker.tracks.keys()) == ids_before, "IDs must survive a merge/split with no churn"
     assert all(tracker.tracks[t].disappeared_count == 0 for t in ids_before)
+
+    # A merged blob's blended centroid must not corrupt the matched track's position: if two
+    # tracks at very different spots produce one merged detection near their midpoint, the
+    # track that "wins" the Hungarian match should stay at its own last real position, not
+    # snap to the blend.
+    corrupt = CentroidTracker(max_distance=200, max_disappeared=5, dead_window_frames=1000)
+    corrupt.update([
+        {"centroid": (0, 0), "contour": np.zeros((3, 1, 2), dtype=int), "area": 100},
+        {"centroid": (100, 100), "contour": np.zeros((3, 1, 2), dtype=int), "area": 100},
+    ], 0)
+    before = {tid: t.centroid for tid, t in corrupt.tracks.items()}
+    corrupt.update([
+        {"centroid": (50, 50), "contour": np.zeros((3, 1, 2), dtype=int), "area": 500,
+         "is_merged": True},
+    ], 1)
+    matched = [tid for tid, t in corrupt.tracks.items() if t.disappeared_count == 0]
+    assert len(matched) == 1, f"exactly one track should match the merged blob, got {matched}"
+    assert corrupt.tracks[matched[0]].centroid == before[matched[0]], (
+        "a merge match must not move the track's centroid to the blended blob's centroid"
+    )
 
     print("tracker.py self-check: PASS")

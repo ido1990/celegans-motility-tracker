@@ -154,7 +154,7 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     }
 
 
-def process_video(path, dry_run, writer, overrides=None):
+def process_video(path, dry_run, writer, overrides=None, stop_event=None):
     """Runs the pipeline on one video, writes its rows to `writer`, and returns
     (aborted, rows) where rows is the same per-worm dicts that were written.
 
@@ -162,19 +162,33 @@ def process_video(path, dry_run, writer, overrides=None):
     pin parameters up front, e.g. {"sensitivity": 20, "min_area": 200}. Any key left out
     keeps its usual default/auto behavior. Min Area is special: if not overridden, it's
     auto-calibrated per video from that video's own footage (see analyzer.estimate_min_area).
+
+    `stop_event` (optional threading.Event) is checked once per frame so a caller running
+    this on a background thread (the launcher's Stop button) can interrupt a run early —
+    same as pressing q/Esc in the live preview window, partial results are still written.
     """
     overrides = overrides or {}
+    if stop_event is not None and stop_event.is_set():
+        return True, []
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         print(f"  could not open {path}, skipping")
         return False, []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    bg_model = analyzer.build_background_model(cap)
+    # Calibration (background model + auto Min Area) alone can take tens of seconds on slow-
+    # seeking video files, so it checks stop_event too — otherwise Stop wouldn't respond until
+    # the whole calibration phase finished, even before the per-frame loop below.
+    bg_model = analyzer.build_background_model(cap, stop_event=stop_event)
+    if stop_event is not None and stop_event.is_set():
+        return True, []
     if overrides.get("min_area") is not None:
         calibrated_min_area = int(overrides["min_area"])
     else:
-        calibrated_min_area = analyzer.estimate_min_area(cap, bg_model, fallback=DEFAULT_MIN_AREA)
+        calibrated_min_area = analyzer.estimate_min_area(
+            cap, bg_model, fallback=DEFAULT_MIN_AREA, stop_event=stop_event)
         print(f"  auto-calibrated Min Area for {os.path.basename(path)}: {calibrated_min_area}px")
+    if stop_event is not None and stop_event.is_set():
+        return True, []
     if not dry_run:
         cv2.setTrackbarPos("Min Area", WINDOW_NAME, min(calibrated_min_area, 3000))
     video_overrides = {**overrides, "min_area": calibrated_min_area}
@@ -187,6 +201,10 @@ def process_video(path, dry_run, writer, overrides=None):
     healthy_threshold = DEFAULT_HEALTHY_THRESHOLD
 
     while True:
+        if stop_event is not None and stop_event.is_set():
+            aborted = True
+            break
+
         ok, frame = cap.read()
         if not ok:
             break
@@ -256,13 +274,17 @@ def find_videos(folder):
     )
 
 
-def run_batch(folder, output_path, dry_run, progress=None, params=None):
+def run_batch(folder, output_path, dry_run, progress=None, params=None, stop_event=None):
     """Processes every video in `folder`, writes `output_path` CSV, and returns the
     combined list of per-worm row dicts (across all videos) for a caller (CLI print,
     or a GUI results view) to use without having to re-read the CSV.
 
     `params` (optional dict) sets initial/fixed parameter values up front (e.g. from a
     launcher UI) instead of relying purely on live trackbar dragging — see process_video().
+
+    `stop_event` (optional threading.Event) is checked between videos and (inside
+    process_video) once per frame, so a caller can interrupt mid-batch or mid-video and
+    still get back the rows collected so far.
     """
     videos = find_videos(folder)
     if not videos:
@@ -279,9 +301,13 @@ def run_batch(folder, output_path, dry_run, progress=None, params=None):
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
             writer.writeheader()
             for i, path in enumerate(videos, 1):
+                if stop_event is not None and stop_event.is_set():
+                    if progress:
+                        progress("Aborted by user.")
+                    break
                 if progress:
                     progress(f"Processing {i}/{len(videos)}: {os.path.basename(path)}")
-                aborted, rows = process_video(path, dry_run, writer, params)
+                aborted, rows = process_video(path, dry_run, writer, params, stop_event)
                 all_rows.extend(rows)
                 f.flush()
                 if aborted:

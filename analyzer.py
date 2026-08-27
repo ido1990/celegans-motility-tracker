@@ -14,12 +14,14 @@ CANDIDATE_ADULT = "CANDIDATE_ADULT"
 _KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
 
-def build_background_model(cap, n_samples=40):
+def build_background_model(cap, n_samples=40, stop_event=None):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     total = max(total, 1)
     idxs = np.linspace(0, total - 1, min(n_samples, total)).astype(int)
     frames = []
     for i in idxs:
+        if stop_event is not None and stop_event.is_set():
+            break
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
         ok, frame = cap.read()
         if ok:
@@ -60,7 +62,7 @@ def _otsu_area_cutoff(areas, fallback):
     return max(15, int(np.exp(cutoff_log) - 1.0))
 
 
-def estimate_min_area(cap, bg_model, watermark_rows=32, n_samples=25, fallback=150):
+def estimate_min_area(cap, bg_model, watermark_rows=32, n_samples=25, fallback=150, stop_event=None):
     """Auto-calibrates the adult/juvenile area cutoff from this video's own footage, so the
     same physical worm size doesn't need a different Min Area typed in by hand at every
     zoom/magnification level."""
@@ -68,6 +70,8 @@ def estimate_min_area(cap, bg_model, watermark_rows=32, n_samples=25, fallback=1
     idxs = np.linspace(0, total - 1, min(n_samples, total)).astype(int)
     areas = []
     for i in idxs:
+        if stop_event is not None and stop_event.is_set():
+            break
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
         ok, frame = cap.read()
         if not ok:
