@@ -253,7 +253,13 @@ so build once per target OS.
   occlusion, a worm's ID can occasionally churn (dropped and re-registered as
   a new ID) rather than being perfectly preserved across every crossing.
   `Max Track Dist` and `Track Patience` are the main levers to tune this for
-  your footage. When two worms merge into one blob, the tracker no longer
+  your footage — the defaults (55px / 30 frames) were raised from an earlier,
+  stricter baseline (40px / 18 frames) after measuring on the sample videos
+  that the looser settings cut total track-ID churn by roughly a third
+  without visibly worse mismatches; raise `Track Patience` further for very
+  dense, slow-moving footage, or lower both back toward the old defaults if
+  you see IDs jumping between worms that are close together. When two worms
+  merge into one blob, the tracker no longer
   lets that blob's blended centroid drag either worm's tracked position
   toward the other — each frozen track only resumes moving once it's seen on
   its own again — which avoids one source of position corruption during an

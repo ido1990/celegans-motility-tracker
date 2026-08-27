@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-MAX_DISTANCE = 40.0
-MAX_DISAPPEARED = 18
+MAX_DISTANCE = 55.0
+MAX_DISAPPEARED = 30
 DEAD_POSITION_DELTA = 6.0
 DEAD_BEND_DELTA = 12.0
 DEAD_WINDOW_FRAMES = 90
