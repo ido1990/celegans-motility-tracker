@@ -16,11 +16,43 @@ minute) per worm — with a live OpenCV preview and a CSV export.
   across frames, tracks how long each worm stays visible, and flags a worm
   `DEAD` once both its position and body-bend deformation stay near-zero for
   a stretch of frames.
-- **`gui.py`** — the app: opens each video in a folder, runs the pipeline,
-  draws live overlays (bounding boxes, ID, status, thrash rate) with
-  trackbars to tune detection on the fly, and writes results to a CSV.
-- **`build.py`** — packages `gui.py` into a single portable executable via
-  PyInstaller.
+- **`gui.py`** — the processing engine + CLI: opens each video in a folder,
+  runs the pipeline, draws live overlays (bounding boxes, ID, status, thrash
+  rate) with trackbars to tune detection on the fly, and writes results to a
+  CSV. Exposes `run_batch()` for other front-ends (like `launcher.py`) to
+  call directly.
+- **`launcher.py`** — **this is the app end users run.** A small Tkinter
+  window: pick a folder, hit Run, and see per-worm results in a table
+  (grouped by video, with a summary line per video) without needing to open
+  the CSV. Runs the pipeline in a background thread so the window stays
+  responsive; the live OpenCV preview (unless "no live preview" is checked)
+  still pops up during processing, same as running `gui.py` directly.
+- **`build.py`** — packages `launcher.py` into a single portable executable
+  via PyInstaller.
+
+### Matching the original requirements
+
+- **Dual strain (CL2122 healthy / GMC diseased) handling** — segmentation
+  uses a self-adapting threshold (Otsu on a background-subtracted frame) so
+  it isn't tuned to one strain's contrast. Motion pace differs a lot between
+  strains, so *what counts as fast enough to be "healthy"* is the **Healthy
+  Rate** trackbar (thrashes/min cutoff) — turn it down for a GMC (diseased,
+  slow) video, up for a CL2122 (healthy, fast) one.
+- **Only adult worms counted** — `classify_contour()` filters out contours
+  below **Min Area** as juveniles (recently hatched, small) before they ever
+  reach the tracker; they're drawn gray, never tracked, never counted.
+- **Dead worms excluded from the count** — a track only flips to `DEAD` once
+  *both* its position and body-bend angle stay within a small delta (**Dead
+  Pos Delta** / **Dead Bend Delta**) for a window of frames (**Dead Window**),
+  and `DEAD` tracks are excluded from `Avg Thrashes/Min` and from the
+  HEALTHY/DISEASED averages shown in the results window.
+- **Worms entering/leaving frame** — `thrash_rate_per_min` is computed as
+  `total_thrashes / (visible_frames / fps) * 60`, where `visible_frames`
+  counts only the frames between that worm's `frame_entry` and `frame_exit`
+  — never the full video length.
+- **Average thrashes/min** — shown live during processing (`Avg
+  Thrashes/Min` overlay, active worms only) and per video in the results
+  window after a run finishes.
 
 ## Running from source
 
@@ -28,6 +60,12 @@ Requires Python 3.10+.
 
 ```bash
 pip install -r requirements.txt
+python launcher.py
+```
+
+For scripting/automation without the GUI, `gui.py` still works standalone:
+
+```bash
 python gui.py --folder assets
 ```
 

@@ -141,10 +141,12 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
 
 
 def process_video(path, dry_run, writer):
+    """Runs the pipeline on one video, writes its rows to `writer`, and returns
+    (aborted, rows) where rows is the same per-worm dicts that were written."""
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         print(f"  could not open {path}, skipping")
-        return False
+        return False, []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     bg_model = analyzer.build_background_model(cap)
     trk = CentroidTracker()
@@ -210,10 +212,54 @@ def process_video(path, dry_run, writer):
 
     cap.release()
 
-    for t in trk.finalize_all():
-        writer.writerow(finalize_row(t, source_video, fps, sensitivity, healthy_threshold))
+    rows = [finalize_row(t, source_video, fps, sensitivity, healthy_threshold)
+            for t in trk.finalize_all()]
+    for row in rows:
+        writer.writerow(row)
 
-    return aborted
+    return aborted, rows
+
+
+def find_videos(folder):
+    return sorted(
+        f for f in glob.glob(os.path.join(folder, "*"))
+        if f.lower().endswith(VIDEO_EXTS)
+    )
+
+
+def run_batch(folder, output_path, dry_run, progress=None):
+    """Processes every video in `folder`, writes `output_path` CSV, and returns the
+    combined list of per-worm row dicts (across all videos) for a caller (CLI print,
+    or a GUI results view) to use without having to re-read the CSV."""
+    videos = find_videos(folder)
+    if not videos:
+        if progress:
+            progress(f"No video files found in {folder}")
+        return []
+
+    if not dry_run:
+        setup_window()
+
+    all_rows = []
+    try:
+        with open(output_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer.writeheader()
+            for i, path in enumerate(videos, 1):
+                if progress:
+                    progress(f"Processing {i}/{len(videos)}: {os.path.basename(path)}")
+                aborted, rows = process_video(path, dry_run, writer)
+                all_rows.extend(rows)
+                f.flush()
+                if aborted:
+                    if progress:
+                        progress("Aborted by user.")
+                    break
+    finally:
+        if not dry_run:
+            cv2.destroyAllWindows()
+
+    return all_rows
 
 
 def main():
@@ -223,32 +269,9 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="headless, no cv2.imshow window")
     args = parser.parse_args()
 
-    videos = sorted(
-        f for f in glob.glob(os.path.join(args.folder, "*"))
-        if f.lower().endswith(VIDEO_EXTS)
-    )
-    if not videos:
-        print(f"No video files found in {args.folder}")
-        return
-
-    if not args.dry_run:
-        setup_window()
-
-    with open(args.output, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for path in videos:
-            print(f"Processing {path} ...")
-            aborted = process_video(path, args.dry_run, writer)
-            f.flush()
-            if aborted:
-                print("Aborted by user.")
-                break
-
-    if not args.dry_run:
-        cv2.destroyAllWindows()
-
-    print(f"Results written to {args.output}")
+    rows = run_batch(args.folder, args.output, args.dry_run, progress=print)
+    if rows:
+        print(f"Results written to {args.output}")
 
 
 if __name__ == "__main__":

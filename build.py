@@ -22,7 +22,7 @@ def main():
     ]
     for mod in _UNRELATED_HEAVY_MODULES:
         args += ["--exclude-module", mod]
-    args.append("gui.py")
+    args.append("launcher.py")
     subprocess.run(args, check=True)
 
 

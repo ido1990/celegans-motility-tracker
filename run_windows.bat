@@ -12,7 +12,7 @@ if not exist venv (
 call venv\Scripts\activate.bat
 pip install -q -r requirements.txt
 
-echo Running MotilityTracker on the assets folder...
-python gui.py %*
+echo Launching MotilityTracker...
+python launcher.py
 
 pause
