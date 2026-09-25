@@ -16,7 +16,8 @@ VIDEO_EXTS = (".avi", ".mp4", ".mov", ".mkv")
 CSV_COLUMNS = [
     "source_video", "worm_id", "final_state", "frame_entry", "frame_exit",
     "visible_frames", "measured_frames", "total_thrashes", "thrash_rate_per_min", "mean_area",
-    "mean_bend_amplitude_deg",
+    "mean_bend_amplitude_deg", "centerline_measured_frames", "centerline_thrashes",
+    "thrash_rate_centerline",
 ]
 
 DEFAULT_MIN_AREA = 150
@@ -142,6 +143,8 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     visible = track.last_seen_frame - track.frame_entry + 1
     sig = analyzer.bend_signal(track.bend_angle_history)
     thrashes, measured, rate = thrashes_and_rate(track, fps, prominence)
+    cl_thrashes, cl_measured = analyzer.count_thrashes_centerline(track.midline_history)
+    cl_rate = cl_thrashes / (cl_measured / fps) * 60.0 if cl_measured > 0 else None
     if track.state == DEAD:
         final_state = "DEAD"
     else:
@@ -158,6 +161,9 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
         "thrash_rate_per_min": round(rate, 2),
         "mean_area": round(float(np.mean(track.area_history)), 1) if track.area_history else 0.0,
         "mean_bend_amplitude_deg": round(float(np.mean(sig)), 2) if len(sig) else 0.0,
+        "centerline_measured_frames": cl_measured,
+        "centerline_thrashes": cl_thrashes,
+        "thrash_rate_centerline": round(cl_rate, 2) if cl_rate is not None else "",
     }
 
 
@@ -244,6 +250,7 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None, on_fra
             detections.append({
                 "centroid": metrics["centroid"], "contour": c, "area": metrics["area"],
                 "bend_angle": angle, "is_merged": is_merged,
+                "midline": None if is_merged else analyzer.midline(c),
             })
             if not is_merged:
                 adult_areas.append(metrics["area"])

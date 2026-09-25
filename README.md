@@ -175,6 +175,7 @@ won't recreate the venv unless you delete the `venv\` folder.
 | `thrash_rate_per_min` | `total_thrashes / (measured_frames / fps) * 60` |
 | `mean_area` | average contour area in pixels |
 | `mean_bend_amplitude_deg` | average body-bend magnitude |
+| `centerline_measured_frames` / `centerline_thrashes` / `thrash_rate_centerline` | experimental second method: thrashes from the signed bend of the worm's centerline (see below) |
 
 ## Validation against hand counts
 
@@ -192,6 +193,29 @@ Current result: mean absolute error 7.1 thrashes/min per video (was 25.6
 before rates were normalized by measured time and Sensitivity was retuned
 from 15 to 12). The remaining error is mostly CL2122 in 300ul np, which is
 undercounted by 13–18/min.
+
+### Per-worm validation
+
+Per-video averages can hide per-worm errors, so the next validation round is
+per worm:
+
+1. `python validation/annotate.py --videos <folder> --out <folder>` renders
+   each video with the tracker's worm IDs (only worms it reports) and saves
+   their positions (`validation/tracks/`) so counts stay matchable if the
+   numbering ever changes.
+2. Count numbered worms on those videos. The lab's counting page does this
+   with a tap counter and records each count's exact video window.
+3. `python validation/compare_worms.py --videos <folder> --counts <csv>`
+   scores every counting method on exactly those worms and windows.
+
+Two methods are computed side by side. `thrash_rate_per_min` (default) counts
+peaks of the unsigned mid-body angle. `thrash_rate_centerline` traces the
+worm's centerline, measures the signed bend between its head and tail halves,
+and counts full left-right swings; frames whose centerline fails quality checks
+(length, symmetric outline, no impossible jumps) are skipped. The centerline
+signal is much cleaner on well-separated worms and fixes the fast CL2122 video
+(16-30-15-574: -17.5 to -1.1), but on per-video averages it is not yet better
+overall (7.7 vs 7.1), so it stays experimental until per-worm counts decide.
 
 ## Self-checks
 

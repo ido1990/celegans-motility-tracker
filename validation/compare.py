@@ -6,7 +6,8 @@ worms vs. the counter's.
 
 Usage:
     python validation/compare.py --videos <folder> [--manual validation/manual_counts_2026-09-03.csv]
-                                 [--min-measured-s 5] [--set sensitivity=20 ...]
+                                 [--min-measured-s 5] [--method measured centerline]
+                                 [--set sensitivity=20 ...]
 """
 import argparse
 import csv
@@ -41,14 +42,19 @@ def parse_params(pairs):
     return params
 
 
-def tracker_rates(rows, fps, min_measured_s):
+RATE_COLUMNS = {"measured": ("thrash_rate_per_min", "measured_frames"),
+                "centerline": ("thrash_rate_centerline", "centerline_measured_frames")}
+
+
+def tracker_rates(rows, fps, min_measured_s, method="measured"):
+    rate_col, frames_col = RATE_COLUMNS[method]
     by_video = defaultdict(list)
     for r in rows:
-        if r["final_state"] == "DEAD":
+        if r["final_state"] == "DEAD" or r[rate_col] == "":
             continue
-        if int(r["measured_frames"]) / fps < min_measured_s:
+        if int(r[frames_col]) / fps < min_measured_s:
             continue
-        by_video[r["source_video"]].append(float(r["thrash_rate_per_min"]))
+        by_video[r["source_video"]].append(float(r[rate_col]))
     return by_video
 
 
@@ -80,6 +86,8 @@ def main():
                     help="ignore worms whose body shape was measured for less than this "
                          "(a hand counter wouldn't count them either)")
     ap.add_argument("--fps", type=float, default=25.0)
+    ap.add_argument("--method", choices=sorted(RATE_COLUMNS), nargs="+", default=["measured"],
+                    help="which thrash-rate column(s) to score")
     ap.add_argument("--set", nargs="*", help="parameter overrides, e.g. sensitivity=20")
     args = ap.parse_args()
 
@@ -87,7 +95,9 @@ def main():
     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
         out = tmp.name
     rows = gui.run_batch(args.videos, out, dry_run=True, params=parse_params(args.set))
-    summarize(manual, meta, tracker_rates(rows, args.fps, args.min_measured_s))
+    for method in args.method:
+        print(f"\n== {method} ==")
+        summarize(manual, meta, tracker_rates(rows, args.fps, args.min_measured_s, method))
 
 
 if __name__ == "__main__":

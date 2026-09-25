@@ -21,6 +21,7 @@ class WormTrack:
     frame_entry: int
     last_seen_frame: int
     bend_angle_history: list = field(default_factory=list)
+    midline_history: list = field(default_factory=list)
     centroid_history: list = field(default_factory=list)
     area_history: list = field(default_factory=list)
     disappeared_count: int = 0
@@ -46,6 +47,7 @@ class CentroidTracker:
         t = WormTrack(id=tid, centroid=det["centroid"], contour=det["contour"],
                       frame_entry=frame_idx, last_seen_frame=frame_idx)
         t.bend_angle_history.append(det.get("bend_angle"))
+        t.midline_history.append(det.get("midline"))
         t.centroid_history.append(det["centroid"])
         t.area_history.append(det.get("area", 0.0))
         self.tracks[tid] = t
@@ -109,6 +111,7 @@ class CentroidTracker:
                 t.disappeared_count = 0
                 angle = None if det.get("is_merged") else det.get("bend_angle")
                 t.bend_angle_history.append(angle)
+                t.midline_history.append(None if det.get("is_merged") else det.get("midline"))
                 t.centroid_history.append(t.centroid)
                 self._update_dead_state(t)
                 matched_track_ids.add(tid)
@@ -120,6 +123,7 @@ class CentroidTracker:
             t = self.tracks[tid]
             t.disappeared_count += 1
             t.bend_angle_history.append(None)
+            t.midline_history.append(None)
             t.centroid_history.append(t.centroid)
             if t.disappeared_count > self.max_disappeared:
                 self._deregister(tid)
