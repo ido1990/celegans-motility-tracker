@@ -161,6 +161,52 @@ def count_thrashes(signal, prominence, min_distance_frames=1):
     return len(peaks) // 2
 
 
+MAX_GAP_FRAMES = 3
+MIN_SEGMENT_FRAMES = 12
+
+
+def measured_segments(angle_history, max_gap=MAX_GAP_FRAMES):
+    """Splits a bend-angle history into runs of frames where the worm's shape was actually
+    measured. Gaps (None: worm merged with another or briefly lost) of up to `max_gap`
+    frames are bridged by linear interpolation; longer gaps end the run."""
+    segments, cur, gap = [], [], 0
+    for a in angle_history:
+        if a is None:
+            gap += 1
+            if gap > max_gap and cur:
+                segments.append(cur)
+                cur = []
+            continue
+        if cur and gap:
+            cur.extend(np.linspace(cur[-1], a, gap + 2)[1:-1])
+        gap = 0
+        cur.append(a)
+    if cur:
+        segments.append(cur)
+    return segments
+
+
+def count_thrashes_measured(angle_history, prominence, min_distance_frames=1,
+                            max_gap=MAX_GAP_FRAMES, min_segment=MIN_SEGMENT_FRAMES):
+    """Counts thrashes only over the frames where the body shape was measured, and returns
+    (thrashes, measured_frames) so the rate can be normalized by that same time.
+
+    Holding the last angle across unmeasured stretches (as bend_signal does) flattens the
+    signal there, so those stretches contribute time but no thrashes — which drags the rate
+    down for any worm that spends a lot of time touching others. Validated against hand
+    counts in validation/ (per-video mean error 26 -> 7 thrashes/min)."""
+    peaks = 0
+    measured = 0
+    for seg in measured_segments(angle_history, max_gap):
+        if len(seg) < min_segment:
+            continue
+        sig = 180.0 - np.asarray(seg, dtype=np.float64)
+        p, _ = find_peaks(sig, prominence=prominence, distance=max(1, min_distance_frames))
+        peaks += len(p)
+        measured += len(seg)
+    return peaks // 2, measured
+
+
 if __name__ == "__main__":
     canvas = np.zeros((200, 200), dtype=np.uint8)
     cv2.ellipse(canvas, (100, 100), (60, 15), 0, 0, 360, 255, -1)
@@ -201,5 +247,18 @@ if __name__ == "__main__":
     assert all(a >= cutoff for a in large_cluster), "every adult-sized sample should clear the cutoff"
     assert _otsu_area_cutoff([50, 51, 52], fallback=999) == 999, "expected fallback on too-few samples"
     assert _otsu_area_cutoff([100] * 20, fallback=999) == 999, "expected fallback on zero-spread data"
+
+    segs = measured_segments([10, None, 30, None, None, None, None, 50, 60])
+    assert segs == [[10, 20.0, 30], [50, 60]], f"unexpected segments {segs}"
+
+    # A worm bending at 1 Hz for 10 s at 25 fps, unmeasured for the middle 10 s: the rate
+    # must come from the 20 measured seconds, not the 30 s it was on screen.
+    t = np.arange(250) / 25.0
+    wave = list(180 - 60 * np.abs(np.sin(2 * np.pi * t)))  # left C and right C each dip the angle
+    hist = wave + [None] * 250 + wave
+    thrashes, measured = count_thrashes_measured(hist, prominence=12, min_distance_frames=2)
+    assert measured == 500, f"expected 500 measured frames, got {measured}"
+    rate = thrashes / (measured / 25.0) * 60
+    assert 55 <= rate <= 62, f"expected ~60 thrashes/min from measured frames only, got {rate}"
 
     print("analyzer.py self-check: PASS")

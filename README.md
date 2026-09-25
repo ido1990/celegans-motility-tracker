@@ -76,10 +76,13 @@ minute) per worm — with a live OpenCV preview and a CSV export.
   Pos Delta** / **Dead Bend Delta**) for a window of frames (**Dead Window**),
   and `DEAD` tracks are excluded from `Avg Thrashes/Min` and from the
   per-video HEALTHY average shown in the results window.
-- **Worms entering/leaving frame** — `thrash_rate_per_min` is computed as
-  `total_thrashes / (visible_frames / fps) * 60`, where `visible_frames`
-  counts only the frames between that worm's `frame_entry` and `frame_exit`
-  — never the full video length.
+- **Worms entering/leaving frame, collisions** — `thrash_rate_per_min` is
+  computed as `total_thrashes / (measured_frames / fps) * 60`, where
+  `measured_frames` counts only the frames in which that worm's body shape
+  was actually measured — not the full video, and not stretches where it was
+  merged with another worm or briefly lost (gaps of up to 3 frames are
+  bridged). Tracks measured for less than 5 s are dropped from the results:
+  they're mostly fragments of a track broken by a collision.
 - **Average thrashes/min** — shown live during processing (`Avg
   Thrashes/Min` overlay, active worms only) and per video in the results
   window after a run finishes.
@@ -167,10 +170,28 @@ won't recreate the venv unless you delete the `venv\` folder.
 | `final_state` | `HEALTHY`, `DISEASED`, or `DEAD` |
 | `frame_entry` / `frame_exit` | first/last frame the worm was tracked |
 | `visible_frames` | frames the worm was actually tracked (excludes offscreen time) |
-| `total_thrashes` | body bends counted over the tracked period |
-| `thrash_rate_per_min` | `total_thrashes / (visible_frames / fps) * 60` |
+| `measured_frames` | frames within that where its body shape was measured (excludes collisions) |
+| `total_thrashes` | body bends counted over the measured frames |
+| `thrash_rate_per_min` | `total_thrashes / (measured_frames / fps) * 60` |
 | `mean_area` | average contour area in pixels |
 | `mean_bend_amplitude_deg` | average body-bend magnitude |
+
+## Validation against hand counts
+
+`validation/manual_counts_2026-09-03.csv` holds hand-counted thrash rates (78
+worms, 8 videos: CL2122 / GMC101 × ddw / 300ul np). `validation/compare.py`
+runs the pipeline on those videos and compares per-video mean rates (hand
+counts cover a subset of worms with no positions, so worms aren't paired
+one-to-one):
+
+```bash
+python validation/compare.py --videos <folder with the 03.09.26 videos>
+```
+
+Current result: mean absolute error 7.1 thrashes/min per video (was 25.6
+before rates were normalized by measured time and Sensitivity was retuned
+from 15 to 12). The remaining error is mostly CL2122 in 300ul np, which is
+undercounted by 13–18/min.
 
 ## Self-checks
 

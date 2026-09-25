@@ -15,14 +15,17 @@ WINDOW_NAME = "Motility Tracker"
 VIDEO_EXTS = (".avi", ".mp4", ".mov", ".mkv")
 CSV_COLUMNS = [
     "source_video", "worm_id", "final_state", "frame_entry", "frame_exit",
-    "visible_frames", "total_thrashes", "thrash_rate_per_min", "mean_area",
+    "visible_frames", "measured_frames", "total_thrashes", "thrash_rate_per_min", "mean_area",
     "mean_bend_amplitude_deg",
 ]
 
 DEFAULT_MIN_AREA = 150
-DEFAULT_SENSITIVITY = 15
+DEFAULT_SENSITIVITY = 12  # tuned against hand counts, see validation/
 DEFAULT_DELAY_MS = 33
 DEFAULT_HEALTHY_THRESHOLD = 20  # thrashes/min; below this an ACTIVE worm reads as DISEASED
+# Tracks whose body shape was measured for less than this are dropped from the results:
+# they're mostly fragments of a track broken by collisions, too short to give a rate.
+DEFAULT_MIN_MEASURED_S = 5.0
 
 
 def _nop(_):
@@ -90,13 +93,17 @@ def apply_tracker_controls(trk, controls):
     trk.dead_window_frames = dead_window
 
 
+def thrashes_and_rate(track, fps, prominence):
+    """(thrashes, measured_frames, rate/min), with the rate taken over only the frames where
+    the worm's body shape was actually measured — see analyzer.count_thrashes_measured."""
+    thrashes, measured = analyzer.count_thrashes_measured(
+        track.bend_angle_history, prominence, min_distance_frames=max(1, int(fps // 10)))
+    rate = thrashes / (measured / fps) * 60.0 if measured > 0 else 0.0
+    return thrashes, measured, rate
+
+
 def live_thrash_rate(track, fps, prominence):
-    visible = track.last_seen_frame - track.frame_entry + 1
-    if visible <= 0:
-        return 0.0
-    sig = analyzer.bend_signal(track.bend_angle_history)
-    thrashes = analyzer.count_thrashes(sig, prominence, min_distance_frames=max(1, int(fps // 10)))
-    return thrashes / (visible / fps) * 60.0
+    return thrashes_and_rate(track, fps, prominence)[2]
 
 
 def status_label(track, fps, prominence, healthy_threshold):
@@ -134,8 +141,7 @@ def draw_summary(vis, active_count, avg_rate):
 def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     visible = track.last_seen_frame - track.frame_entry + 1
     sig = analyzer.bend_signal(track.bend_angle_history)
-    thrashes = analyzer.count_thrashes(sig, prominence, min_distance_frames=max(1, int(fps // 10)))
-    rate = thrashes / (visible / fps) * 60.0 if visible > 0 else 0.0
+    thrashes, measured, rate = thrashes_and_rate(track, fps, prominence)
     if track.state == DEAD:
         final_state = "DEAD"
     else:
@@ -147,6 +153,7 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
         "frame_entry": track.frame_entry,
         "frame_exit": track.last_seen_frame,
         "visible_frames": visible,
+        "measured_frames": measured,
         "total_thrashes": thrashes,
         "thrash_rate_per_min": round(rate, 2),
         "mean_area": round(float(np.mean(track.area_history)), 1) if track.area_history else 0.0,
@@ -259,8 +266,10 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None):
 
     cap.release()
 
+    min_measured_frames = overrides.get("min_measured_s", DEFAULT_MIN_MEASURED_S) * fps
     rows = [finalize_row(t, source_video, fps, sensitivity, healthy_threshold)
             for t in trk.finalize_all()]
+    rows = [r for r in rows if r["measured_frames"] >= min_measured_frames]
     for row in rows:
         writer.writerow(row)
 
