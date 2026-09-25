@@ -161,7 +161,7 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     }
 
 
-def process_video(path, dry_run, writer, overrides=None, stop_event=None):
+def process_video(path, dry_run, writer, overrides=None, stop_event=None, on_frame=None):
     """Runs the pipeline on one video, writes its rows to `writer`, and returns
     (aborted, rows) where rows is the same per-worm dicts that were written.
 
@@ -173,6 +173,10 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None):
     `stop_event` (optional threading.Event) is checked once per frame so a caller running
     this on a background thread (the launcher's Stop button) can interrupt a run early —
     same as pressing q/Esc in the live preview window, partial results are still written.
+
+    `on_frame` (optional callable) is called as on_frame(frame_idx, tracks) after each
+    frame's tracker update — used by validation/annotate.py to draw the exact IDs this
+    run reports.
     """
     overrides = overrides or {}
     if stop_event is not None and stop_event.is_set():
@@ -245,6 +249,8 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None):
                 adult_areas.append(metrics["area"])
 
         tracks = trk.update(detections, frame_idx)
+        if on_frame is not None:
+            on_frame(frame_idx, tracks)
 
         if not dry_run:
             vis = frame.copy()
