@@ -76,10 +76,13 @@ minute) per worm — with a live OpenCV preview and a CSV export.
   Pos Delta** / **Dead Bend Delta**) for a window of frames (**Dead Window**),
   and `DEAD` tracks are excluded from `Avg Thrashes/Min` and from the
   per-video HEALTHY average shown in the results window.
-- **Worms entering/leaving frame** — `thrash_rate_per_min` is computed as
-  `total_thrashes / (visible_frames / fps) * 60`, where `visible_frames`
-  counts only the frames between that worm's `frame_entry` and `frame_exit`
-  — never the full video length.
+- **Worms entering/leaving frame, collisions** — `thrash_rate_per_min` is
+  computed as `total_thrashes / (measured_frames / fps) * 60`, where
+  `measured_frames` counts only the frames in which that worm's body shape
+  was actually measured — not the full video, and not stretches where it was
+  merged with another worm or briefly lost (gaps of up to 3 frames are
+  bridged). Tracks measured for less than 5 s are dropped from the results:
+  they're mostly fragments of a track broken by a collision.
 - **Average thrashes/min** — shown live during processing (`Avg
   Thrashes/Min` overlay, active worms only) and per video in the results
   window after a run finishes.
@@ -167,10 +170,87 @@ won't recreate the venv unless you delete the `venv\` folder.
 | `final_state` | `HEALTHY`, `DISEASED`, or `DEAD` |
 | `frame_entry` / `frame_exit` | first/last frame the worm was tracked |
 | `visible_frames` | frames the worm was actually tracked (excludes offscreen time) |
-| `total_thrashes` | body bends counted over the tracked period |
-| `thrash_rate_per_min` | `total_thrashes / (visible_frames / fps) * 60` |
+| `measured_frames` | frames within that where its centerline was measured cleanly (excludes overlaps) |
+| `total_thrashes` | full left-right body swings counted over the measured frames |
+| `thrash_rate_per_min` | `total_thrashes / (measured_frames / fps) * 60` |
 | `mean_area` | average contour area in pixels |
+| `mean_length_px` | median centerline length in pixels |
 | `mean_bend_amplitude_deg` | average body-bend magnitude |
+| `angle_measured_frames` / `angle_thrashes` / `thrash_rate_angle` | the older mid-body-angle method, for comparison |
+
+## Validation against hand counts
+
+`validation/manual_counts_2026-09-03.csv` holds hand-counted thrash rates (78
+worms, 8 videos: CL2122 / GMC101 × ddw / 300ul np). `validation/compare.py`
+runs the pipeline on those videos and compares per-video mean rates (hand
+counts cover a subset of worms with no positions, so worms aren't paired
+one-to-one):
+
+```bash
+python validation/compare.py --videos <folder with the 03.09.26 videos>
+```
+
+Add `--method centerline angle` to score both rate columns. See the per-worm
+results below for current numbers.
+
+### Per-worm validation
+
+Per-video averages can hide per-worm errors, so the next validation round is
+per worm:
+
+1. `python validation/annotate.py --videos <folder> --out <folder>` renders
+   each video with the tracker's worm IDs (only worms it reports) and saves
+   their positions (`validation/tracks/`) so counts stay matchable if the
+   numbering ever changes.
+2. Count numbered worms on those videos. The lab's counting page does this
+   with a tap counter and records each count's exact video window.
+3. `python validation/compare_worms.py --videos <folder> --counts <csv>`
+   scores every counting method on exactly those worms and windows.
+
+`thrash_rate_per_min` traces the worm's centerline, measures the signed bend
+between its head and tail halves, and counts full left-right swings; frames
+whose centerline fails quality checks (length, symmetric outline, no impossible
+jumps) are skipped. `thrash_rate_angle` is the older method (peaks of the
+unsigned mid-body angle), kept for comparison and used for the live preview's
+running rate.
+
+Against the per-worm tap counts in `validation/worm_counts_2026-09-10.csv`
+(33 counts, 11 videos): centerline 12.7 thrashes/min mean error (52% of worms
+within 10/min), angle 18.3 (36%). Against the per-video 03.09.26 sheet the
+centerline rate reads about 12/min low (angle: 7.0 mean error); that sheet was
+counted differently and its worms can't be matched one-to-one.
+
+Two more filters shape which worms are reported:
+
+- The tracker keeps a worm's track alive through overlaps and outline flicker,
+  and does not measure a blob more than 1.5x a worm's usual area (two worms
+  touching). Fewer worms are reported, but cleaner ones.
+- Worms shorter than half the length of the video's biggest worms (90th
+  percentile of `mean_length_px`) are dropped as juveniles.
+
+### Self-tuning
+
+`validation/tune.py` re-tunes the thrash-counting settings against the per-worm
+hand counts and saves them for the tracker to use:
+
+```bash
+python validation/tune.py --videos <folder with the counted videos>
+```
+
+It tracks each counted video once (cached in `<folder>/.tune_cache`), searches
+the counting parameters for the lowest error, then repeats the search with each
+video held out and scores it on that video. Only when that held-out error
+improves by at least 1 thrash/min does it write `tuned_params.json`, which
+`analyzer.py` loads on import and `build.py` bundles into the executable.
+Otherwise it reports "nothing changed". Add `--dry-run` to see the report
+without saving. It needs the original videos (same file names as in the counts
+CSV), not the numbered copies.
+
+On Colab: clone the repo, `pip install -r requirements.txt`, mount Drive, and
+point `--videos` at a folder holding the counted videos.
+
+It tunes counting only. Detection and tracking settings change which worms
+exist, so tuning them would mean re-running every video for every trial.
 
 ## Self-checks
 

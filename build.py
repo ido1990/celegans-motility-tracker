@@ -5,6 +5,7 @@ binary, not a Windows .exe. To distribute a .exe to non-technical Windows users,
 run this same script on a Windows machine (with `pip install -r requirements.txt`
 done there first).
 """
+import os
 import subprocess
 import sys
 
@@ -22,6 +23,8 @@ def main():
     ]
     for mod in _UNRELATED_HEAVY_MODULES:
         args += ["--exclude-module", mod]
+    if os.path.exists("tuned_params.json"):  # written by validation/tune.py
+        args += ["--add-data", f"tuned_params.json{os.pathsep}."]
     args.append("launcher.py")
     subprocess.run(args, check=True)
 

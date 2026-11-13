@@ -2,6 +2,10 @@
 
 No OpenCV window/GUI code and no tracker state lives here.
 """
+import json
+import os
+import sys
+
 import numpy as np
 import cv2
 from scipy.signal import find_peaks
@@ -161,6 +165,207 @@ def count_thrashes(signal, prominence, min_distance_frames=1):
     return len(peaks) // 2
 
 
+MAX_GAP_FRAMES = 3
+MIN_SEGMENT_FRAMES = 12
+
+
+def measured_segments(angle_history, max_gap=MAX_GAP_FRAMES):
+    """Splits a bend-angle history into runs of frames where the worm's shape was actually
+    measured. Gaps (None: worm merged with another or briefly lost) of up to `max_gap`
+    frames are bridged by linear interpolation; longer gaps end the run."""
+    segments, cur, gap = [], [], 0
+    for a in angle_history:
+        if a is None:
+            gap += 1
+            if gap > max_gap and cur:
+                segments.append(cur)
+                cur = []
+            continue
+        if cur and gap:
+            cur.extend(np.linspace(cur[-1], a, gap + 2)[1:-1])
+        gap = 0
+        cur.append(a)
+    if cur:
+        segments.append(cur)
+    return segments
+
+
+def count_thrashes_measured(angle_history, prominence, min_distance_frames=1,
+                            max_gap=MAX_GAP_FRAMES, min_segment=MIN_SEGMENT_FRAMES):
+    """Counts thrashes only over the frames where the body shape was measured, and returns
+    (thrashes, measured_frames) so the rate can be normalized by that same time.
+
+    Holding the last angle across unmeasured stretches (as bend_signal does) flattens the
+    signal there, so those stretches contribute time but no thrashes — which drags the rate
+    down for any worm that spends a lot of time touching others. Validated against hand
+    counts in validation/ (per-video mean error 26 -> 7 thrashes/min)."""
+    peaks = 0
+    measured = 0
+    for seg in measured_segments(angle_history, max_gap):
+        if len(seg) < min_segment:
+            continue
+        sig = 180.0 - np.asarray(seg, dtype=np.float64)
+        p, _ = find_peaks(sig, prominence=prominence, distance=max(1, min_distance_frames))
+        peaks += len(p)
+        measured += len(seg)
+    return peaks // 2, measured
+
+
+def _resample_closed(pts, m):
+    loop = np.vstack([pts, pts[:1]])
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(loop, axis=0), axis=1))])
+    if s[-1] <= 0:
+        return None
+    t = np.linspace(0, s[-1], m, endpoint=False)
+    return np.column_stack([np.interp(t, s, loop[:, 0]), np.interp(t, s, loop[:, 1])])
+
+
+def _resample_open(pts, k):
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    if s[-1] <= 0:
+        return None
+    t = np.linspace(0, s[-1], k)
+    return np.column_stack([np.interp(t, s, pts[:, 0]), np.interp(t, s, pts[:, 1])])
+
+
+def midline(contour, n_outline=80, n_points=21, tip_span=4):
+    """Centerline of a thin worm outline, as (points, length, side_ratio) or None.
+
+    The head and tail are the two sharpest tips of the outline (at least a quarter of
+    the outline apart); the two sides between them are resampled and averaged pointwise.
+    side_ratio (shorter side / longer side) is near 1 for a clean single-worm outline and
+    drops when the outline is really two touching worms or a partial shape."""
+    pts = contour.reshape(-1, 2).astype(np.float64)
+    if len(pts) < 5:
+        return None
+    c = _resample_closed(pts, n_outline)
+    if c is None:
+        return None
+    a = np.roll(c, tip_span, axis=0) - c
+    b = np.roll(c, -tip_span, axis=0) - c
+    sharp = (a * b).sum(1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-9)
+    i1 = int(np.argmax(sharp))
+    circ = np.abs((np.arange(n_outline) - i1 + n_outline // 2) % n_outline - n_outline // 2)
+    i2 = int(np.argmax(np.where(circ >= n_outline // 4, sharp, -np.inf)))
+    i1, i2 = min(i1, i2), max(i1, i2)
+    side1 = c[i1:i2 + 1]
+    side2 = np.vstack([c[i2:], c[:i1 + 1]])[::-1]
+    len1 = np.linalg.norm(np.diff(side1, axis=0), axis=1).sum()
+    len2 = np.linalg.norm(np.diff(side2, axis=0), axis=1).sum()
+    r1, r2 = _resample_open(side1, n_points), _resample_open(side2, n_points)
+    if r1 is None or r2 is None:
+        return None
+    ml = (r1 + r2) / 2.0
+    length = float(np.linalg.norm(np.diff(ml, axis=0), axis=1).sum())
+    return ml, length, float(min(len1, len2) / max(len1, len2))
+
+
+def signed_bend(ml):
+    """Signed bend (deg) between the head half and tail half of a centerline: positive
+    one way, negative the other, so a full thrash swings it through + and -."""
+    v = np.diff(ml, axis=0)
+    ang = np.unwrap(np.arctan2(v[:, 1], v[:, 0]))
+    n = len(ang)
+    return float(np.degrees(ang[n // 2:].mean() - ang[:n // 2].mean()))
+
+
+def _orient(ml, prev):
+    """Keeps head/tail order consistent with the previous frame's centerline."""
+    if prev is None:
+        return ml
+    same = np.linalg.norm(ml[0] - prev[0]) + np.linalg.norm(ml[-1] - prev[-1])
+    flip = np.linalg.norm(ml[0] - prev[-1]) + np.linalg.norm(ml[-1] - prev[0])
+    return ml[::-1] if flip < same else ml
+
+
+CL_LENGTH_TOL = 0.30     # centerline length must be within +-30% of the worm's median
+CL_SIDE_MIN = 0.60       # both sides of the outline at least 60% as long as each other
+CL_MAX_JUMP_DEG = 90.0   # a real worm can't change its bend more than this in one frame
+CL_PROMINENCE_DEG = 40.0  # tuned on per-worm hand counts (validation/worm_counts_2026-09-10.csv)
+CL_MIN_SEGMENT = 25
+CL_PEAKS_PER_S = 5.0     # two swings to the same side can't be closer than 1/5 s
+
+TUNABLE = ("CL_LENGTH_TOL", "CL_SIDE_MIN", "CL_MAX_JUMP_DEG", "CL_PROMINENCE_DEG", "CL_MIN_SEGMENT",
+           "CL_PEAKS_PER_S")
+
+
+def tuned_params_path():
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "tuned_params.json")
+
+
+def _load_tuned_params():
+    """validation/tune.py writes tuned_params.json; values there replace the defaults above."""
+    try:
+        with open(tuned_params_path()) as f:
+            params = json.load(f).get("params", {})
+    except (OSError, ValueError):
+        return
+    for name in TUNABLE:
+        if isinstance(params.get(name), (int, float)):
+            globals()[name] = type(globals()[name])(params[name])
+
+
+_load_tuned_params()
+
+
+def centerline_min_distance(fps):
+    return max(2, int(round(fps / CL_PEAKS_PER_S)))
+
+
+def centerline_bend_segments(midline_history, max_gap=MAX_GAP_FRAMES):
+    """Signed-bend signal over the frames whose centerline passes quality checks, split
+    into runs like measured_segments(). Frames that fail count as gaps."""
+    lengths = [m[1] for m in midline_history if m is not None]
+    if not lengths:
+        return []
+    median_len = float(np.median(lengths))
+    segments, cur, prev, gap = [], [], None, 0
+    for m in midline_history:
+        ok = (m is not None and median_len > 0
+              and abs(m[1] / median_len - 1.0) <= CL_LENGTH_TOL and m[2] >= CL_SIDE_MIN)
+        if ok:
+            ml = _orient(m[0], prev)
+            bend = signed_bend(ml)
+            if cur and abs(bend - cur[-1]) > CL_MAX_JUMP_DEG * (gap + 1):
+                ok = False
+        if not ok:
+            gap += 1
+            if gap > max_gap and cur:
+                segments.append(cur)
+                cur, prev = [], None
+            continue
+        if cur and gap:
+            cur.extend(np.linspace(cur[-1], bend, gap + 2)[1:-1])
+        gap = 0
+        prev = ml
+        cur.append(bend)
+    if cur:
+        segments.append(cur)
+    return segments
+
+
+def count_thrashes_centerline(midline_history, prominence=None, min_distance_frames=3,
+                              min_segment=None):
+    """(thrashes, measured_frames) from the signed centerline bend: one thrash per full
+    swing, i.e. the average of the number of + peaks and - peaks. Experimental: reported
+    alongside count_thrashes_measured. Callers pass
+    min_distance_frames=centerline_min_distance(fps)."""
+    prominence = CL_PROMINENCE_DEG if prominence is None else prominence
+    min_segment = CL_MIN_SEGMENT if min_segment is None else min_segment
+    peaks = 0.0
+    measured = 0
+    for seg in centerline_bend_segments(midline_history):
+        if len(seg) < min_segment:
+            continue
+        x = np.asarray(seg, dtype=np.float64)
+        hi, _ = find_peaks(x, prominence=prominence, distance=min_distance_frames)
+        lo, _ = find_peaks(-x, prominence=prominence, distance=min_distance_frames)
+        peaks += (len(hi) + len(lo)) / 2.0
+        measured += len(seg)
+    return int(round(peaks)), measured
+
+
 if __name__ == "__main__":
     canvas = np.zeros((200, 200), dtype=np.uint8)
     cv2.ellipse(canvas, (100, 100), (60, 15), 0, 0, 360, 255, -1)
@@ -201,5 +406,42 @@ if __name__ == "__main__":
     assert all(a >= cutoff for a in large_cluster), "every adult-sized sample should clear the cutoff"
     assert _otsu_area_cutoff([50, 51, 52], fallback=999) == 999, "expected fallback on too-few samples"
     assert _otsu_area_cutoff([100] * 20, fallback=999) == 999, "expected fallback on zero-spread data"
+
+    segs = measured_segments([10, None, 30, None, None, None, None, 50, 60])
+    assert segs == [[10, 20.0, 30], [50, 60]], f"unexpected segments {segs}"
+
+    # A worm bending at 1 Hz for 10 s at 25 fps, unmeasured for the middle 10 s: the rate
+    # must come from the 20 measured seconds, not the 30 s it was on screen.
+    t = np.arange(250) / 25.0
+    wave = list(180 - 60 * np.abs(np.sin(2 * np.pi * t)))  # left C and right C each dip the angle
+    hist = wave + [None] * 250 + wave
+    thrashes, measured = count_thrashes_measured(hist, prominence=12, min_distance_frames=2)
+    assert measured == 500, f"expected 500 measured frames, got {measured}"
+    rate = thrashes / (measured / 25.0) * 60
+    assert 55 <= rate <= 62, f"expected ~60 thrashes/min from measured frames only, got {rate}"
+
+    # Centerline: a synthetic worm bending left and right at 1 Hz for 10 s (25 fps) should
+    # read as ~60 thrashes/min, and a straight worm's centerline as ~0 deg of bend.
+    def _worm(bend_deg, n=60, length=80, width=4):
+        k = np.radians(bend_deg) / length  # constant curvature
+        s = np.linspace(-length / 2, length / 2, n)
+        theta = k * s
+        x = np.cumsum(np.cos(theta)); y = np.cumsum(np.sin(theta))
+        pts = np.column_stack([x, y]) + 100
+        canvas = np.zeros((300, 300), dtype=np.uint8)
+        cv2.polylines(canvas, [pts.astype(np.int32).reshape(-1, 1, 2)], False, 255, width)
+        return max(cv2.findContours(canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0],
+                   key=cv2.contourArea)
+
+    straight = midline(_worm(0.1))
+    assert straight is not None and abs(signed_bend(straight[0])) < 15, "straight worm should read ~0 bend"
+    curved = midline(_worm(120))
+    assert curved is not None and abs(signed_bend(curved[0])) > 40, "C-shaped worm should read a large bend"
+
+    t = np.arange(250) / 25.0
+    hist = [midline(_worm(100 * np.sin(2 * np.pi * ti))) for ti in t]
+    thr, meas = count_thrashes_centerline(hist)
+    rate = thr / (meas / 25.0) * 60
+    assert 50 <= rate <= 70, f"expected ~60 thrashes/min from centerline, got {rate}"
 
     print("analyzer.py self-check: PASS")
