@@ -14,17 +14,20 @@ import gui as core
 import tracker as tracker_mod
 
 RESULT_COLUMNS = ["worm_id", "final_state", "frame_entry", "frame_exit", "visible_frames",
-                   "total_thrashes", "thrash_rate_per_min", "mean_area", "mean_bend_amplitude_deg"]
+                   "total_thrashes", "thrash_rate_per_min", "quality", "mean_area", "mean_bend_amplitude_deg"]
 COLUMN_HEADERS = {
     "worm_id": "ID", "final_state": "State", "frame_entry": "In", "frame_exit": "Out",
     "visible_frames": "Visible Fr.", "total_thrashes": "Thrashes",
-    "thrash_rate_per_min": "Thrash/min", "mean_area": "Mean Area",
+    "thrash_rate_per_min": "Thrash/min", "quality": "Quality", "mean_area": "Mean Area",
     "mean_bend_amplitude_deg": "Mean Bend deg",
 }
 # Per-video summary stats, shown only on each video's parent row (blank on worm rows) — kept as
 # real columns rather than packed into the tree label, since that column is too narrow to show them.
-SUMMARY_COLUMNS = ["avg_all_rate", "avg_healthy_rate"]
-SUMMARY_HEADERS = {"avg_all_rate": "Avg All/min", "avg_healthy_rate": "Avg Healthy/min"}
+# "Avg Clean/min" averages only the worms that were never tangled with another for long
+# (quality CLEAN) — the most trustworthy number for a video when it has enough of them.
+SUMMARY_COLUMNS = ["avg_all_rate", "avg_healthy_rate", "avg_clean_rate"]
+SUMMARY_HEADERS = {"avg_all_rate": "Avg All/min", "avg_healthy_rate": "Avg Healthy/min",
+                   "avg_clean_rate": "Avg Clean/min (n)"}
 
 # key, label, default, min, max — mirrors gui.py's cv2 trackbars, minus Min Area (handled
 # separately below since it can be auto-calibrated per video instead of a fixed number).
@@ -284,13 +287,16 @@ class App:
             avg_all_rate = sum(r["thrash_rate_per_min"] for r in video_rows) / len(video_rows)
             avg_healthy_rate = (sum(r["thrash_rate_per_min"] for r in healthy_rows) / len(healthy_rows)
                                  if healthy_rows else 0.0)
+            clean_rows = [r for r in video_rows if r["quality"] == "CLEAN" and r["final_state"] != "DEAD"]
+            avg_clean = (f"{sum(r['thrash_rate_per_min'] for r in clean_rows) / len(clean_rows):.1f} ({len(clean_rows)})"
+                         if clean_rows else "– (0)")
             parent_text = (f"{video}  —  {len(video_rows)} worms | "
-                            f"Healthy:{len(healthy_rows)} Diseased:{diseased} Dead:{dead}")
-            summary_values = [""] * len(RESULT_COLUMNS) + [f"{avg_all_rate:.1f}", f"{avg_healthy_rate:.1f}"]
+                            f"Healthy:{len(healthy_rows)} Diseased:{diseased} Dead:{dead} Clean:{len(clean_rows)}")
+            summary_values = [""] * len(RESULT_COLUMNS) + [f"{avg_all_rate:.1f}", f"{avg_healthy_rate:.1f}", avg_clean]
             parent = self.tree.insert("", "end", text=parent_text, open=True, values=summary_values)
             for r in sorted(video_rows, key=lambda r: r["worm_id"]):
                 self.tree.insert(parent, "end", text="",
-                                  values=[r[c] for c in RESULT_COLUMNS] + ["", ""])
+                                  values=[r[c] for c in RESULT_COLUMNS] + [""] * len(SUMMARY_COLUMNS))
 
 
 def main():
