@@ -2,6 +2,10 @@
 
 No OpenCV window/GUI code and no tracker state lives here.
 """
+import json
+import os
+import sys
+
 import numpy as np
 import cv2
 from scipy.signal import find_peaks
@@ -279,6 +283,34 @@ CL_SIDE_MIN = 0.60       # both sides of the outline at least 60% as long as eac
 CL_MAX_JUMP_DEG = 90.0   # a real worm can't change its bend more than this in one frame
 CL_PROMINENCE_DEG = 40.0  # tuned on per-worm hand counts (validation/worm_counts_2026-09-10.csv)
 CL_MIN_SEGMENT = 25
+CL_PEAKS_PER_S = 5.0     # two swings to the same side can't be closer than 1/5 s
+
+TUNABLE = ("CL_LENGTH_TOL", "CL_SIDE_MIN", "CL_MAX_JUMP_DEG", "CL_PROMINENCE_DEG", "CL_MIN_SEGMENT",
+           "CL_PEAKS_PER_S")
+
+
+def tuned_params_path():
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "tuned_params.json")
+
+
+def _load_tuned_params():
+    """validation/tune.py writes tuned_params.json; values there replace the defaults above."""
+    try:
+        with open(tuned_params_path()) as f:
+            params = json.load(f).get("params", {})
+    except (OSError, ValueError):
+        return
+    for name in TUNABLE:
+        if isinstance(params.get(name), (int, float)):
+            globals()[name] = type(globals()[name])(params[name])
+
+
+_load_tuned_params()
+
+
+def centerline_min_distance(fps):
+    return max(2, int(round(fps / CL_PEAKS_PER_S)))
 
 
 def centerline_bend_segments(midline_history, max_gap=MAX_GAP_FRAMES):
@@ -313,12 +345,14 @@ def centerline_bend_segments(midline_history, max_gap=MAX_GAP_FRAMES):
     return segments
 
 
-def count_thrashes_centerline(midline_history, prominence=CL_PROMINENCE_DEG, min_distance_frames=3,
-                              min_segment=CL_MIN_SEGMENT):
+def count_thrashes_centerline(midline_history, prominence=None, min_distance_frames=3,
+                              min_segment=None):
     """(thrashes, measured_frames) from the signed centerline bend: one thrash per full
     swing, i.e. the average of the number of + peaks and - peaks. Experimental: reported
-    alongside count_thrashes_measured. Callers pass min_distance_frames = fps / 5 (two
-    swings of the same sign can't be closer than that)."""
+    alongside count_thrashes_measured. Callers pass
+    min_distance_frames=centerline_min_distance(fps)."""
+    prominence = CL_PROMINENCE_DEG if prominence is None else prominence
+    min_segment = CL_MIN_SEGMENT if min_segment is None else min_segment
     peaks = 0.0
     measured = 0
     for seg in centerline_bend_segments(midline_history):

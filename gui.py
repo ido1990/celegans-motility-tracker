@@ -107,7 +107,7 @@ def thrashes_and_rate(track, fps, prominence):
     over only the frames where its shape was measured cleanly — see
     analyzer.count_thrashes_centerline."""
     thrashes, measured = analyzer.count_thrashes_centerline(
-        track.midline_history, prominence=prominence, min_distance_frames=max(2, int(round(fps / 5))))
+        track.midline_history, prominence=prominence, min_distance_frames=analyzer.centerline_min_distance(fps))
     rate = thrashes / (measured / fps) * 60.0 if measured > 0 else 0.0
     return thrashes, measured, rate
 

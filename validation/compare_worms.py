@@ -24,8 +24,9 @@ import analyzer  # noqa: E402
 import gui  # noqa: E402
 
 
-def collect_tracks(path):
-    """Runs the pipeline once and returns every reported track object by ID, plus fps."""
+def collect_tracks(path, all_tracks=False):
+    """Runs the pipeline once and returns every reported track object by ID, plus fps.
+    all_tracks=True also returns tracks the report filters drop (short, small)."""
     tracks = {}
 
     def on_frame(_, live):
@@ -37,6 +38,8 @@ def collect_tracks(path):
     cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     cap.release()
+    if all_tracks:
+        return tracks, fps
     return {r["worm_id"]: tracks[r["worm_id"]] for r in rows if r["worm_id"] in tracks}, fps
 
 
@@ -79,7 +82,7 @@ def method_rates(track, fps, win):
         track.bend_angle_history[win], gui.ANGLE_PROMINENCE, min_distance_frames=max(1, int(fps // 10)))
     out["angle"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
     thr, meas = analyzer.count_thrashes_centerline(
-        track.midline_history[win], min_distance_frames=max(2, int(round(fps / 5))))
+        track.midline_history[win], min_distance_frames=analyzer.centerline_min_distance(fps))
     out["centerline"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
     return out
 

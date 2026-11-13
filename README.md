@@ -228,6 +228,30 @@ Two more filters shape which worms are reported:
 - Worms shorter than half the length of the video's biggest worms (90th
   percentile of `mean_length_px`) are dropped as juveniles.
 
+### Self-tuning
+
+`validation/tune.py` re-tunes the thrash-counting settings against the per-worm
+hand counts and saves them for the tracker to use:
+
+```bash
+python validation/tune.py --videos <folder with the counted videos>
+```
+
+It tracks each counted video once (cached in `<folder>/.tune_cache`), searches
+the counting parameters for the lowest error, then repeats the search with each
+video held out and scores it on that video. Only when that held-out error
+improves by at least 1 thrash/min does it write `tuned_params.json`, which
+`analyzer.py` loads on import and `build.py` bundles into the executable.
+Otherwise it reports "nothing changed". Add `--dry-run` to see the report
+without saving. It needs the original videos (same file names as in the counts
+CSV), not the numbered copies.
+
+On Colab: clone the repo, `pip install -r requirements.txt`, mount Drive, and
+point `--videos` at a folder holding the counted videos.
+
+It tunes counting only. Detection and tracking settings change which worms
+exist, so tuning them would mean re-running every video for every trial.
+
 ## Self-checks
 
 `analyzer.py` and `tracker.py` each have a small built-in check (synthetic
