@@ -78,7 +78,8 @@ def method_rates(track, fps, win):
     thr, meas = analyzer.count_thrashes_measured(
         track.bend_angle_history[win], gui.DEFAULT_SENSITIVITY, min_distance_frames=max(1, int(fps // 10)))
     out["measured"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
-    thr, meas = analyzer.count_thrashes_centerline(track.midline_history[win])
+    thr, meas = analyzer.count_thrashes_centerline(
+        track.midline_history[win], min_distance_frames=max(2, int(round(fps / 5))))
     out["centerline"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
     return out
 

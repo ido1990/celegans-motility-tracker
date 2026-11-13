@@ -277,7 +277,7 @@ def _orient(ml, prev):
 CL_LENGTH_TOL = 0.30     # centerline length must be within +-30% of the worm's median
 CL_SIDE_MIN = 0.60       # both sides of the outline at least 60% as long as each other
 CL_MAX_JUMP_DEG = 90.0   # a real worm can't change its bend more than this in one frame
-CL_PROMINENCE_DEG = 20.0
+CL_PROMINENCE_DEG = 40.0  # tuned on per-worm hand counts (validation/worm_counts_2026-09-10.csv)
 CL_MIN_SEGMENT = 25
 
 
@@ -317,7 +317,8 @@ def count_thrashes_centerline(midline_history, prominence=CL_PROMINENCE_DEG, min
                               min_segment=CL_MIN_SEGMENT):
     """(thrashes, measured_frames) from the signed centerline bend: one thrash per full
     swing, i.e. the average of the number of + peaks and - peaks. Experimental: reported
-    alongside count_thrashes_measured until per-worm hand counts show which is better."""
+    alongside count_thrashes_measured. Callers pass min_distance_frames = fps / 5 (two
+    swings of the same sign can't be closer than that)."""
     peaks = 0.0
     measured = 0
     for seg in centerline_bend_segments(midline_history):

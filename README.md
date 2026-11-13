@@ -212,10 +212,18 @@ Two methods are computed side by side. `thrash_rate_per_min` (default) counts
 peaks of the unsigned mid-body angle. `thrash_rate_centerline` traces the
 worm's centerline, measures the signed bend between its head and tail halves,
 and counts full left-right swings; frames whose centerline fails quality checks
-(length, symmetric outline, no impossible jumps) are skipped. The centerline
-signal is much cleaner on well-separated worms and fixes the fast CL2122 video
-(16-30-15-574: -17.5 to -1.1), but on per-video averages it is not yet better
-overall (7.7 vs 7.1), so it stays experimental until per-worm counts decide.
+(length, symmetric outline, no impossible jumps) are skipped.
+
+Against the per-worm tap counts in `validation/worm_counts_2026-09-10.csv`
+(33 counts, 11 videos; 26 usable): default 18.0 thrashes/min mean error (31% of
+worms within 10/min), centerline 14.0 (52% within 10/min). Against the
+per-video 03.09.26 sheet the order is reversed (default 7.1, centerline 11.1,
+reading about 10/min low). The two sets of hand counts were made differently, so
+the default stays as it is until that is resolved.
+
+`tracker.HOLD_THROUGH_OVERLAP` (off) is an experimental tracker mode that keeps
+a worm's track alive through overlaps and outline flicker and refuses to measure
+a blob that is too big to be one worm.
 
 ## Self-checks
 

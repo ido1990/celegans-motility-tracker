@@ -143,7 +143,8 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     visible = track.last_seen_frame - track.frame_entry + 1
     sig = analyzer.bend_signal(track.bend_angle_history)
     thrashes, measured, rate = thrashes_and_rate(track, fps, prominence)
-    cl_thrashes, cl_measured = analyzer.count_thrashes_centerline(track.midline_history)
+    cl_thrashes, cl_measured = analyzer.count_thrashes_centerline(
+        track.midline_history, min_distance_frames=max(2, int(round(fps / 5))))
     cl_rate = cl_thrashes / (cl_measured / fps) * 60.0 if cl_measured > 0 else None
     if track.state == DEAD:
         final_state = "DEAD"
