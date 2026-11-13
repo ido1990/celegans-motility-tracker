@@ -11,6 +11,8 @@ empty for counts entered by hand over the worm's whole visible time).
 """
 import argparse
 import csv
+import gzip
+import json
 import os
 import sys
 from collections import defaultdict
@@ -36,6 +38,31 @@ def collect_tracks(path):
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     cap.release()
     return {r["worm_id"]: tracks[r["worm_id"]] for r in rows if r["worm_id"] in tracks}, fps
+
+
+def find_track(tracks, fps, count, video, tracks_dir, max_px=15.0):
+    """The track a hand count refers to. The count's worm number is the one drawn on the
+    numbered video; if tracking has changed since that video was rendered the numbers no
+    longer line up, so match by position against the positions saved at render time."""
+    name = os.path.splitext(os.path.basename(video))[0]
+    saved_path = os.path.join(tracks_dir, name + ".tracks.json.gz")
+    if not os.path.exists(saved_path):
+        return tracks.get(count["worm_id"])
+    with gzip.open(saved_path, "rt") as f:
+        saved = json.load(f)["tracks"].get(str(count["worm_id"]), [])
+    if count["t_start"] is not None:
+        saved = [p for p in saved if count["t_start"] * fps <= p[0] <= count["t_end"] * fps]
+    best, best_d = None, max_px
+    for t in tracks.values():
+        dists = []
+        for frame, x, y in saved:
+            k = frame - t.frame_entry
+            if 0 <= k < len(t.centroid_history):
+                cx, cy = t.centroid_history[k]
+                dists.append(((cx - x) ** 2 + (cy - y) ** 2) ** 0.5)
+        if len(dists) >= max(3, len(saved) // 2) and np.median(dists) < best_d:
+            best, best_d = t, float(np.median(dists))
+    return best
 
 
 def window(track, fps, t_start, t_end):
@@ -72,6 +99,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--videos", required=True)
     ap.add_argument("--counts", required=True)
+    ap.add_argument("--tracks-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracks"),
+                    help="worm positions saved by annotate.py when the numbered videos were rendered")
     ap.add_argument("--min-overlap-s", type=float, default=5.0,
                     help="skip a worm if the tracker measured it for less than this within the window")
     args = ap.parse_args()
@@ -88,7 +117,7 @@ def main():
         tracks, fps = collect_tracks(path)
         for c in sorted(rows, key=lambda r: r["worm_id"]):
             hand = c["thrashes"] / c["time_s"] * 60.0
-            t = tracks.get(c["worm_id"])
+            t = find_track(tracks, fps, c, path, args.tracks_dir)
             cells = []
             for m in methods:
                 if t is None:

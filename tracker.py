@@ -1,5 +1,6 @@
 """Centroid tracker: frame-to-frame worm identity + lifespan + dead-state tracking."""
 from dataclasses import dataclass, field
+import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -8,6 +9,16 @@ MAX_DISAPPEARED = 30
 DEAD_POSITION_DELTA = 6.0
 DEAD_BEND_DELTA = 12.0
 DEAD_WINDOW_FRAMES = 90
+# Holding a track through an overlap or a flickering outline (see CentroidTracker.update):
+FUSED_AREA_RATIO = 1.5      # a blob this many times a worm's own usual area is two worms touching
+OCCLUDED_PATIENCE = 150     # frames a worm may stay hidden inside a multi-worm blob
+WEAK_PATIENCE = 90          # frames a worm may be seen only as an undersized/curled outline
+WEAK_AREA_FRACTION = 0.25   # ...which must be at least this fraction of its usual area
+OCCLUSION_MARGIN_PX = 8.0
+# Experimental, off by default: on the validation videos it gives fewer but cleaner worms
+# (reported worms -30%, per-video error 7.1 -> 6.5 thrashes/min) and renumbers worms, so it
+# stays off until per-worm hand counts show it's worth it.
+HOLD_THROUGH_OVERLAP = False
 
 ACTIVE = "ACTIVE"
 DEAD = "DEAD"
@@ -73,7 +84,47 @@ class CentroidTracker:
         else:
             t.state = ACTIVE
 
-    def update(self, detections, frame_idx):
+    @staticmethod
+    def _usual_area(t):
+        areas = t.area_history[-50:]
+        return float(np.median(areas)) if len(areas) >= 5 else None
+
+    def _is_fused(self, t, det):
+        """True when `det` is too big to be this worm alone: it's touching another worm."""
+        usual = self._usual_area(t)
+        return usual is not None and det.get("area", 0.0) > FUSED_AREA_RATIO * usual
+
+    def _hidden_in(self, t, blobs):
+        """True when the track's last real position lies in/next to a multi-worm blob."""
+        pt = (float(t.centroid[0]), float(t.centroid[1]))
+        usual = self._usual_area(t)
+        for det in blobs:
+            if not det.get("is_merged") and (usual is None or det.get("area", 0.0) <= FUSED_AREA_RATIO * usual):
+                continue
+            if cv2.pointPolygonTest(det["contour"], pt, True) >= -OCCLUSION_MARGIN_PX:
+                return True
+        return False
+
+    def _weak_match(self, t, weak, taken):
+        """Nearest undersized/curled outline that could be this worm seen badly."""
+        usual = self._usual_area(t)
+        if usual is None:
+            return None
+        best, best_d = None, self.max_distance / 2.0
+        for k, det in enumerate(weak):
+            if k in taken or det.get("area", 0.0) < WEAK_AREA_FRACTION * usual:
+                continue
+            d = ((t.centroid[0] - det["centroid"][0]) ** 2 + (t.centroid[1] - det["centroid"][1]) ** 2) ** 0.5
+            if d < best_d:
+                best, best_d = k, d
+        return best
+
+    def update(self, detections, frame_idx, weak=None):
+        """`weak` (optional): outlines the classifier rejected as too small or too round.
+        They never start a track or give a shape measurement, but an existing track with
+        nothing better nearby follows one, so a worm whose outline flickers isn't lost."""
+        weak = weak or []
+        weak_taken = set()
         candidates = [d for d in detections if not d.get("is_merged")]
         merged = [d for d in detections if d.get("is_merged")]
         all_dets = candidates + merged
@@ -97,7 +148,8 @@ class CentroidTracker:
                 tid = track_ids[r]
                 det = all_dets[c]
                 t = self.tracks[tid]
-                if det.get("is_merged"):
+                unmeasurable = det.get("is_merged") or (HOLD_THROUGH_OVERLAP and self._is_fused(t, det))
+                if unmeasurable:
                     # A merged blob's blended centroid is an average of (at least) two worms'
                     # positions — not this worm's true position. Keep the last real position
                     # instead of jumping to it (same treatment as a miss, below); only the
@@ -109,9 +161,8 @@ class CentroidTracker:
                     t.area_history.append(det.get("area", 0.0))
                 t.last_seen_frame = frame_idx
                 t.disappeared_count = 0
-                angle = None if det.get("is_merged") else det.get("bend_angle")
-                t.bend_angle_history.append(angle)
-                t.midline_history.append(None if det.get("is_merged") else det.get("midline"))
+                t.bend_angle_history.append(None if unmeasurable else det.get("bend_angle"))
+                t.midline_history.append(None if unmeasurable else det.get("midline"))
                 t.centroid_history.append(t.centroid)
                 self._update_dead_state(t)
                 matched_track_ids.add(tid)
@@ -122,10 +173,21 @@ class CentroidTracker:
                 continue
             t = self.tracks[tid]
             t.disappeared_count += 1
+            patience = self.max_disappeared
+            if HOLD_THROUGH_OVERLAP:
+                if self._hidden_in(t, all_dets):
+                    patience = max(patience, OCCLUDED_PATIENCE)
+                else:
+                    k = self._weak_match(t, weak, weak_taken)
+                    if k is not None:
+                        weak_taken.add(k)
+                        t.centroid = weak[k]["centroid"]
+                        t.contour = weak[k]["contour"]
+                        patience = max(patience, WEAK_PATIENCE)
             t.bend_angle_history.append(None)
             t.midline_history.append(None)
             t.centroid_history.append(t.centroid)
-            if t.disappeared_count > self.max_disappeared:
+            if t.disappeared_count > patience:
                 self._deregister(tid)
 
         for j, det in enumerate(candidates):
@@ -189,5 +251,23 @@ if __name__ == "__main__":
     assert corrupt.tracks[matched[0]].centroid == before[matched[0]], (
         "a merge match must not move the track's centroid to the blended blob's centroid"
     )
+
+    # Experimental hold-through-overlap: a worm hidden inside a multi-worm blob outlives the
+    # normal patience, and a blob far bigger than the worm itself gives no shape measurement.
+    def _sq(cx, cy, half):
+        return np.array([[[cx - half, cy - half]], [[cx + half, cy - half]],
+                         [[cx + half, cy + half]], [[cx - half, cy + half]]], dtype=np.int32)
+    HOLD_THROUGH_OVERLAP = True
+    hold = CentroidTracker(max_distance=50, max_disappeared=3, dead_window_frames=1000)
+    for f in range(6):
+        hold.update([{"centroid": (20, 20), "contour": _sq(20, 20, 5), "area": 100, "bend_angle": 170.0},
+                     {"centroid": (40, 20), "contour": _sq(40, 20, 5), "area": 100, "bend_angle": 170.0}], f)
+    ids = set(hold.tracks)
+    for f in range(6, 16):  # the two touch: one blob of twice the area, for longer than max_disappeared
+        hold.update([{"centroid": (30, 20), "contour": _sq(30, 20, 16), "area": 200, "bend_angle": 90.0}], f)
+    assert set(hold.tracks) == ids, "both worms must survive an overlap longer than the normal patience"
+    assert all(t.bend_angle_history[-1] is None for t in hold.tracks.values()), (
+        "a fused blob must not be measured as one worm's shape")
+    HOLD_THROUGH_OVERLAP = False
 
     print("tracker.py self-check: PASS")

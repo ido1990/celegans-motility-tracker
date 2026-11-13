@@ -237,9 +237,12 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None, on_fra
         contours = analyzer.extract_contours(mask)
 
         detections = []
+        weak = []
         juvenile_contours = []
         for c in contours:
             label, metrics = analyzer.classify_contour(c, min_area, max_single_area)
+            if label in (analyzer.JUVENILE, analyzer.DEBRIS):
+                weak.append({"centroid": metrics["centroid"], "contour": c, "area": metrics["area"]})
             if label == analyzer.JUVENILE:
                 juvenile_contours.append(c)
                 continue
@@ -255,7 +258,7 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None, on_fra
             if not is_merged:
                 adult_areas.append(metrics["area"])
 
-        tracks = trk.update(detections, frame_idx)
+        tracks = trk.update(detections, frame_idx, weak)
         if on_frame is not None:
             on_frame(frame_idx, tracks)
 
