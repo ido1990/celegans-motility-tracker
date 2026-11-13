@@ -177,6 +177,7 @@ won't recreate the venv unless you delete the `venv\` folder.
 | `mean_length_px` | median centerline length in pixels |
 | `mean_bend_amplitude_deg` | average body-bend magnitude |
 | `angle_measured_frames` / `angle_thrashes` / `thrash_rate_angle` | the older mid-body-angle method, for comparison |
+| `quality` / `measured_share` / `longest_clean_s` | `CLEAN` or `PARTIAL`, and the two measurements behind it (see Clean worms) |
 
 ## Validation against hand counts
 
@@ -227,6 +228,19 @@ Two more filters shape which worms are reported:
   touching). Fewer worms are reported, but cleaner ones.
 - Worms shorter than half the length of the video's biggest worms (90th
   percentile of `mean_length_px`) are dropped as juveniles.
+
+### Clean worms
+
+Each worm gets a `quality`: `CLEAN` when its centerline was measured for at
+least 80% of its time on screen with an uninterrupted stretch of 5 s or more
+(it never spent long touching another worm), otherwise `PARTIAL`.
+`measured_share` and `longest_clean_s` hold the two numbers behind it. Against
+the per-worm hand counts, CLEAN worms are off by 8.8 thrashes/min on average
+(13 worms) and PARTIAL worms by 19.0 (8 worms). The results window shows each
+video's average over CLEAN worms next to the average over all worms. Using the
+clean worms to calibrate the others (per-video sensitivity from their swing
+amplitude) was tried and gave no gain, so they are flagged, not used to adjust
+the rest.
 
 ### Self-tuning
 

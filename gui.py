@@ -17,7 +17,7 @@ CSV_COLUMNS = [
     "source_video", "worm_id", "final_state", "frame_entry", "frame_exit",
     "visible_frames", "measured_frames", "total_thrashes", "thrash_rate_per_min", "mean_area",
     "mean_length_px", "mean_bend_amplitude_deg", "angle_measured_frames", "angle_thrashes",
-    "thrash_rate_angle",
+    "thrash_rate_angle", "quality", "measured_share", "longest_clean_s",
 ]
 
 DEFAULT_MIN_AREA = 150
@@ -35,6 +35,11 @@ DEFAULT_MIN_MEASURED_S = 5.0
 # Worms shorter than this fraction of the video's biggest worms are dropped as juveniles.
 # "Biggest" is the 90th percentile of worm lengths, so one mis-measured giant can't set it.
 DEFAULT_MIN_LENGTH_FRACTION = 0.5
+# A worm is CLEAN when it was measured for most of its time on screen, with at least one
+# long uninterrupted stretch: it never spent long touching another worm. Against per-worm
+# hand counts CLEAN worms are about twice as accurate as the rest (see README).
+CLEAN_MIN_SHARE = 0.8
+CLEAN_MIN_STRETCH_S = 5.0
 
 
 def _nop(_):
@@ -124,6 +129,15 @@ def live_thrash_rate(track, fps, prominence):
     return angle_thrashes_and_rate(track, fps)[2]
 
 
+def cleanliness(track, fps, measured, visible):
+    """(quality, measured_share, longest_clean_s) — see CLEAN_MIN_SHARE."""
+    segments = analyzer.centerline_bend_segments(track.midline_history)
+    longest = max((len(seg) for seg in segments), default=0) / fps
+    share = measured / visible if visible > 0 else 0.0
+    clean = share >= CLEAN_MIN_SHARE and longest >= CLEAN_MIN_STRETCH_S
+    return ("CLEAN" if clean else "PARTIAL"), share, longest
+
+
 def mean_length(track):
     lengths = [m[1] for m in track.midline_history if m is not None]
     return float(np.median(lengths)) if lengths else 0.0
@@ -166,6 +180,7 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     sig = analyzer.bend_signal(track.bend_angle_history)
     thrashes, measured, rate = thrashes_and_rate(track, fps, prominence)
     angle_thrashes, angle_measured, angle_rate = angle_thrashes_and_rate(track, fps)
+    quality, share, longest = cleanliness(track, fps, measured, visible)
     if track.state == DEAD:
         final_state = "DEAD"
     else:
@@ -186,6 +201,9 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
         "angle_measured_frames": angle_measured,
         "angle_thrashes": angle_thrashes,
         "thrash_rate_angle": round(angle_rate, 2),
+        "quality": quality,
+        "measured_share": round(share, 2),
+        "longest_clean_s": round(longest, 1),
     }
 
 
