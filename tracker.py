@@ -15,10 +15,9 @@ OCCLUDED_PATIENCE = 150     # frames a worm may stay hidden inside a multi-worm 
 WEAK_PATIENCE = 90          # frames a worm may be seen only as an undersized/curled outline
 WEAK_AREA_FRACTION = 0.25   # ...which must be at least this fraction of its usual area
 OCCLUSION_MARGIN_PX = 8.0
-# Experimental, off by default: on the validation videos it gives fewer but cleaner worms
-# (reported worms -30%, per-video error 7.1 -> 6.5 thrashes/min) and renumbers worms, so it
-# stays off until per-worm hand counts show it's worth it.
-HOLD_THROUGH_OVERLAP = False
+# Keep a worm's track through overlaps/flicker, and don't measure a blob too big to be one
+# worm. Fewer but cleaner worms; validated in validation/ (see README).
+HOLD_THROUGH_OVERLAP = True
 
 ACTIVE = "ACTIVE"
 DEAD = "DEAD"
@@ -257,7 +256,6 @@ if __name__ == "__main__":
     def _sq(cx, cy, half):
         return np.array([[[cx - half, cy - half]], [[cx + half, cy - half]],
                          [[cx + half, cy + half]], [[cx - half, cy + half]]], dtype=np.int32)
-    HOLD_THROUGH_OVERLAP = True
     hold = CentroidTracker(max_distance=50, max_disappeared=3, dead_window_frames=1000)
     for f in range(6):
         hold.update([{"centroid": (20, 20), "contour": _sq(20, 20, 5), "area": 100, "bend_angle": 170.0},
@@ -268,6 +266,5 @@ if __name__ == "__main__":
     assert set(hold.tracks) == ids, "both worms must survive an overlap longer than the normal patience"
     assert all(t.bend_angle_history[-1] is None for t in hold.tracks.values()), (
         "a fused blob must not be measured as one worm's shape")
-    HOLD_THROUGH_OVERLAP = False
 
     print("tracker.py self-check: PASS")

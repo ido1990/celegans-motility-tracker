@@ -6,7 +6,7 @@ worms vs. the counter's.
 
 Usage:
     python validation/compare.py --videos <folder> [--manual validation/manual_counts_2026-09-03.csv]
-                                 [--min-measured-s 5] [--method measured centerline]
+                                 [--min-measured-s 5] [--method centerline angle]
                                  [--set sensitivity=20 ...]
 """
 import argparse
@@ -42,8 +42,8 @@ def parse_params(pairs):
     return params
 
 
-RATE_COLUMNS = {"measured": ("thrash_rate_per_min", "measured_frames"),
-                "centerline": ("thrash_rate_centerline", "centerline_measured_frames")}
+RATE_COLUMNS = {"centerline": ("thrash_rate_per_min", "measured_frames"),
+                "angle": ("thrash_rate_angle", "angle_measured_frames")}
 
 
 def tracker_rates(rows, fps, min_measured_s, method="measured"):
@@ -86,7 +86,7 @@ def main():
                     help="ignore worms whose body shape was measured for less than this "
                          "(a hand counter wouldn't count them either)")
     ap.add_argument("--fps", type=float, default=25.0)
-    ap.add_argument("--method", choices=sorted(RATE_COLUMNS), nargs="+", default=["measured"],
+    ap.add_argument("--method", choices=sorted(RATE_COLUMNS), nargs="+", default=["centerline"],
                     help="which thrash-rate column(s) to score")
     ap.add_argument("--set", nargs="*", help="parameter overrides, e.g. sensitivity=20")
     args = ap.parse_args()

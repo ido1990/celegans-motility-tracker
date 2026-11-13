@@ -16,17 +16,25 @@ VIDEO_EXTS = (".avi", ".mp4", ".mov", ".mkv")
 CSV_COLUMNS = [
     "source_video", "worm_id", "final_state", "frame_entry", "frame_exit",
     "visible_frames", "measured_frames", "total_thrashes", "thrash_rate_per_min", "mean_area",
-    "mean_bend_amplitude_deg", "centerline_measured_frames", "centerline_thrashes",
-    "thrash_rate_centerline",
+    "mean_length_px", "mean_bend_amplitude_deg", "angle_measured_frames", "angle_thrashes",
+    "thrash_rate_angle",
 ]
 
 DEFAULT_MIN_AREA = 150
-DEFAULT_SENSITIVITY = 12  # tuned against hand counts, see validation/
+# Sensitivity = how far (deg) the signed centerline bend must swing to count as a thrash.
+# Tuned on per-worm hand counts, see validation/.
+DEFAULT_SENSITIVITY = int(analyzer.CL_PROMINENCE_DEG)
+# The older unsigned mid-body-angle method, still reported as thrash_rate_angle and used for
+# the live preview's running rate (it is cheap enough to recompute every frame).
+ANGLE_PROMINENCE = 12
 DEFAULT_DELAY_MS = 33
 DEFAULT_HEALTHY_THRESHOLD = 20  # thrashes/min; below this an ACTIVE worm reads as DISEASED
 # Tracks whose body shape was measured for less than this are dropped from the results:
 # they're mostly fragments of a track broken by collisions, too short to give a rate.
 DEFAULT_MIN_MEASURED_S = 5.0
+# Worms shorter than this fraction of the video's biggest worms are dropped as juveniles.
+# "Biggest" is the 90th percentile of worm lengths, so one mis-measured giant can't set it.
+DEFAULT_MIN_LENGTH_FRACTION = 0.5
 
 
 def _nop(_):
@@ -37,7 +45,7 @@ def setup_window(overrides=None):
     o = overrides or {}
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.createTrackbar("Min Area", WINDOW_NAME, int(o.get("min_area", DEFAULT_MIN_AREA)), 3000, _nop)
-    cv2.createTrackbar("Sensitivity", WINDOW_NAME, int(o.get("sensitivity", DEFAULT_SENSITIVITY)), 60, _nop)
+    cv2.createTrackbar("Sensitivity", WINDOW_NAME, int(o.get("sensitivity", DEFAULT_SENSITIVITY)), 120, _nop)
     cv2.createTrackbar("Playback Speed (ms)", WINDOW_NAME, int(o.get("delay_ms", DEFAULT_DELAY_MS)), 200, _nop)
     cv2.createTrackbar("Max Track Dist", WINDOW_NAME, int(o.get("max_distance", tracker_mod.MAX_DISTANCE)), 150, _nop)
     cv2.createTrackbar("Track Patience (fr)", WINDOW_NAME,
@@ -95,16 +103,30 @@ def apply_tracker_controls(trk, controls):
 
 
 def thrashes_and_rate(track, fps, prominence):
-    """(thrashes, measured_frames, rate/min), with the rate taken over only the frames where
-    the worm's body shape was actually measured — see analyzer.count_thrashes_measured."""
+    """(thrashes, measured_frames, rate/min) from the worm's centerline, with the rate taken
+    over only the frames where its shape was measured cleanly — see
+    analyzer.count_thrashes_centerline."""
+    thrashes, measured = analyzer.count_thrashes_centerline(
+        track.midline_history, prominence=prominence, min_distance_frames=max(2, int(round(fps / 5))))
+    rate = thrashes / (measured / fps) * 60.0 if measured > 0 else 0.0
+    return thrashes, measured, rate
+
+
+def angle_thrashes_and_rate(track, fps):
     thrashes, measured = analyzer.count_thrashes_measured(
-        track.bend_angle_history, prominence, min_distance_frames=max(1, int(fps // 10)))
+        track.bend_angle_history, ANGLE_PROMINENCE, min_distance_frames=max(1, int(fps // 10)))
     rate = thrashes / (measured / fps) * 60.0 if measured > 0 else 0.0
     return thrashes, measured, rate
 
 
 def live_thrash_rate(track, fps, prominence):
-    return thrashes_and_rate(track, fps, prominence)[2]
+    """Running rate for the live overlay only: the quick angle method, not the final number."""
+    return angle_thrashes_and_rate(track, fps)[2]
+
+
+def mean_length(track):
+    lengths = [m[1] for m in track.midline_history if m is not None]
+    return float(np.median(lengths)) if lengths else 0.0
 
 
 def status_label(track, fps, prominence, healthy_threshold):
@@ -143,9 +165,7 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
     visible = track.last_seen_frame - track.frame_entry + 1
     sig = analyzer.bend_signal(track.bend_angle_history)
     thrashes, measured, rate = thrashes_and_rate(track, fps, prominence)
-    cl_thrashes, cl_measured = analyzer.count_thrashes_centerline(
-        track.midline_history, min_distance_frames=max(2, int(round(fps / 5))))
-    cl_rate = cl_thrashes / (cl_measured / fps) * 60.0 if cl_measured > 0 else None
+    angle_thrashes, angle_measured, angle_rate = angle_thrashes_and_rate(track, fps)
     if track.state == DEAD:
         final_state = "DEAD"
     else:
@@ -161,10 +181,11 @@ def finalize_row(track, source_video, fps, prominence, healthy_threshold):
         "total_thrashes": thrashes,
         "thrash_rate_per_min": round(rate, 2),
         "mean_area": round(float(np.mean(track.area_history)), 1) if track.area_history else 0.0,
+        "mean_length_px": round(mean_length(track), 1),
         "mean_bend_amplitude_deg": round(float(np.mean(sig)), 2) if len(sig) else 0.0,
-        "centerline_measured_frames": cl_measured,
-        "centerline_thrashes": cl_thrashes,
-        "thrash_rate_centerline": round(cl_rate, 2) if cl_rate is not None else "",
+        "angle_measured_frames": angle_measured,
+        "angle_thrashes": angle_thrashes,
+        "thrash_rate_angle": round(angle_rate, 2),
     }
 
 
@@ -287,6 +308,14 @@ def process_video(path, dry_run, writer, overrides=None, stop_event=None, on_fra
     rows = [finalize_row(t, source_video, fps, sensitivity, healthy_threshold)
             for t in trk.finalize_all()]
     rows = [r for r in rows if r["measured_frames"] >= min_measured_frames]
+    min_length_fraction = overrides.get("min_length_fraction", DEFAULT_MIN_LENGTH_FRACTION)
+    if rows and min_length_fraction > 0:
+        biggest = float(np.percentile([r["mean_length_px"] for r in rows], 90))
+        kept = [r for r in rows if r["mean_length_px"] >= min_length_fraction * biggest]
+        if len(kept) < len(rows):
+            print(f"  dropped {len(rows) - len(kept)} small worm(s) in {source_video} "
+                  f"(shorter than {min_length_fraction:.0%} of {biggest:.0f}px)")
+        rows = kept
     for row in rows:
         writer.writerow(row)
 

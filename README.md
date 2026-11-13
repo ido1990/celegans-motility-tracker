@@ -170,12 +170,13 @@ won't recreate the venv unless you delete the `venv\` folder.
 | `final_state` | `HEALTHY`, `DISEASED`, or `DEAD` |
 | `frame_entry` / `frame_exit` | first/last frame the worm was tracked |
 | `visible_frames` | frames the worm was actually tracked (excludes offscreen time) |
-| `measured_frames` | frames within that where its body shape was measured (excludes collisions) |
-| `total_thrashes` | body bends counted over the measured frames |
+| `measured_frames` | frames within that where its centerline was measured cleanly (excludes overlaps) |
+| `total_thrashes` | full left-right body swings counted over the measured frames |
 | `thrash_rate_per_min` | `total_thrashes / (measured_frames / fps) * 60` |
 | `mean_area` | average contour area in pixels |
+| `mean_length_px` | median centerline length in pixels |
 | `mean_bend_amplitude_deg` | average body-bend magnitude |
-| `centerline_measured_frames` / `centerline_thrashes` / `thrash_rate_centerline` | experimental second method: thrashes from the signed bend of the worm's centerline (see below) |
+| `angle_measured_frames` / `angle_thrashes` / `thrash_rate_angle` | the older mid-body-angle method, for comparison |
 
 ## Validation against hand counts
 
@@ -189,10 +190,8 @@ one-to-one):
 python validation/compare.py --videos <folder with the 03.09.26 videos>
 ```
 
-Current result: mean absolute error 7.1 thrashes/min per video (was 25.6
-before rates were normalized by measured time and Sensitivity was retuned
-from 15 to 12). The remaining error is mostly CL2122 in 300ul np, which is
-undercounted by 13–18/min.
+Add `--method centerline angle` to score both rate columns. See the per-worm
+results below for current numbers.
 
 ### Per-worm validation
 
@@ -208,22 +207,26 @@ per worm:
 3. `python validation/compare_worms.py --videos <folder> --counts <csv>`
    scores every counting method on exactly those worms and windows.
 
-Two methods are computed side by side. `thrash_rate_per_min` (default) counts
-peaks of the unsigned mid-body angle. `thrash_rate_centerline` traces the
-worm's centerline, measures the signed bend between its head and tail halves,
-and counts full left-right swings; frames whose centerline fails quality checks
-(length, symmetric outline, no impossible jumps) are skipped.
+`thrash_rate_per_min` traces the worm's centerline, measures the signed bend
+between its head and tail halves, and counts full left-right swings; frames
+whose centerline fails quality checks (length, symmetric outline, no impossible
+jumps) are skipped. `thrash_rate_angle` is the older method (peaks of the
+unsigned mid-body angle), kept for comparison and used for the live preview's
+running rate.
 
 Against the per-worm tap counts in `validation/worm_counts_2026-09-10.csv`
-(33 counts, 11 videos; 26 usable): default 18.0 thrashes/min mean error (31% of
-worms within 10/min), centerline 14.0 (52% within 10/min). Against the
-per-video 03.09.26 sheet the order is reversed (default 7.1, centerline 11.1,
-reading about 10/min low). The two sets of hand counts were made differently, so
-the default stays as it is until that is resolved.
+(33 counts, 11 videos): centerline 12.7 thrashes/min mean error (52% of worms
+within 10/min), angle 18.3 (36%). Against the per-video 03.09.26 sheet the
+centerline rate reads about 12/min low (angle: 7.0 mean error); that sheet was
+counted differently and its worms can't be matched one-to-one.
 
-`tracker.HOLD_THROUGH_OVERLAP` (off) is an experimental tracker mode that keeps
-a worm's track alive through overlaps and outline flicker and refuses to measure
-a blob that is too big to be one worm.
+Two more filters shape which worms are reported:
+
+- The tracker keeps a worm's track alive through overlaps and outline flicker,
+  and does not measure a blob more than 1.5x a worm's usual area (two worms
+  touching). Fewer worms are reported, but cleaner ones.
+- Worms shorter than half the length of the video's biggest worms (90th
+  percentile of `mean_length_px`) are dropped as juveniles.
 
 ## Self-checks
 

@@ -29,7 +29,7 @@ SUMMARY_HEADERS = {"avg_all_rate": "Avg All/min", "avg_healthy_rate": "Avg Healt
 # key, label, default, min, max — mirrors gui.py's cv2 trackbars, minus Min Area (handled
 # separately below since it can be auto-calibrated per video instead of a fixed number).
 PARAM_SPECS = [
-    ("sensitivity", "Sensitivity (thrash prominence, deg)", core.DEFAULT_SENSITIVITY, 1, 60),
+    ("sensitivity", "Sensitivity (thrash prominence, deg)", core.DEFAULT_SENSITIVITY, 1, 120),
     ("healthy_threshold", "Healthy Rate (thrashes/min cutoff)", core.DEFAULT_HEALTHY_THRESHOLD, 0, 100),
     ("max_distance", "Max Track Dist (px)", int(tracker_mod.MAX_DISTANCE), 1, 150),
     ("max_disappeared", "Track Patience (frames)", tracker_mod.MAX_DISAPPEARED, 1, 120),
@@ -40,8 +40,9 @@ PARAM_SPECS = [
 ]
 
 PARAM_TOOLTIPS = {
-    "sensitivity": "Minimum body-bend angle change (deg) to count as one thrash. Lower = more "
-                   "sensitive (catches subtler bends but more noise); higher = only strong bends count.",
+    "sensitivity": "How far (deg) the worm's body must swing from one side to the other to count "
+                   "as a thrash. Lower = more sensitive (catches subtler bends but more noise); "
+                   "higher = only strong bends count. 40 was tuned against hand counts.",
     "healthy_threshold": "Thrash rate (thrashes/min) cutoff. A worm that's alive (not DEAD) is "
                           "labeled HEALTHY at or above this rate, DISEASED below it.",
     "max_distance": "Max pixel distance a worm can move between frames and still match its "

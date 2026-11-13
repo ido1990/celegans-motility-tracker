@@ -76,8 +76,8 @@ def window(track, fps, t_start, t_end):
 def method_rates(track, fps, win):
     out = {}
     thr, meas = analyzer.count_thrashes_measured(
-        track.bend_angle_history[win], gui.DEFAULT_SENSITIVITY, min_distance_frames=max(1, int(fps // 10)))
-    out["measured"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
+        track.bend_angle_history[win], gui.ANGLE_PROMINENCE, min_distance_frames=max(1, int(fps // 10)))
+    out["angle"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
     thr, meas = analyzer.count_thrashes_centerline(
         track.midline_history[win], min_distance_frames=max(2, int(round(fps / 5))))
     out["centerline"] = (thr / (meas / fps) * 60.0 if meas else None, meas / fps)
@@ -107,7 +107,7 @@ def main():
     args = ap.parse_args()
 
     counts = load_counts(args.counts)
-    methods = ("measured", "centerline")
+    methods = ("centerline", "angle")
     errs = {m: [] for m in methods}
     print(f"{'video':<14}{'worm':>5}{'hand':>7}" + "".join(f"{m:>12}" for m in methods))
     for video, rows in sorted(counts.items()):
